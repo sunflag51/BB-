@@ -247,14 +247,14 @@ def wave_figure(prices, swings, title, show_bb=True):
         increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
     if show_bb:
         for col, name, color in [("BB_Lower", "BB下限", "#42a5f5"),
-                                 ("BB_Middle", "BB中央", "#a0a7b4"),
+                                 ("BB_Middle", "BB中央", "#616161"),
                                  ("BB_Upper", "BB上限", "#42a5f5")]:
             fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
                 mode="lines", line=dict(color=color, width=1)))
     if not swings.empty:
         sx = pd.to_datetime(swings["日付"]).dt.strftime("%Y-%m-%d")
         fig.add_trace(go.Scatter(x=sx, y=swings["価格"], mode="lines",
-            name="高値・安値の波", line=dict(color="#ffc107", width=2.5)))
+            name="高値・安値の波", line=dict(color="#b8860b", width=2.5)))
         for kind, color, symbol in [("高値", "#ef5350", "triangle-down"),
                                      ("安値", "#26a69a", "triangle-up")]:
             q = swings[swings["種類"] == kind]
@@ -265,13 +265,15 @@ def wave_figure(prices, swings, title, show_bb=True):
                 textposition="top center" if kind == "高値" else "bottom center",
                 customdata=q[["確定日", "前回同種比"]].astype(str).values,
                 hovertemplate="%{x}<br>%{y:,.2f}<br>確定日: %{customdata[0]}<br>%{customdata[1]}<extra></extra>"))
-    fig.update_layout(title=title, template="plotly_dark", height=600,
-        paper_bgcolor="#131722", plot_bgcolor="#131722", dragmode="pan",
+    fig.update_layout(title=title, template="plotly_white", height=600,
+        paper_bgcolor="white", plot_bgcolor="white", font=dict(color="black"),
+        dragmode="pan",
         margin=dict(l=15, r=70, t=65, b=45),
         legend=dict(orientation="h", y=1.08),
         xaxis=dict(type="category", categoryorder="array", categoryarray=list(dates),
                    rangeslider=dict(visible=False), nticks=10, showspikes=True),
-        yaxis=dict(side="right", title="価格", showspikes=True, fixedrange=False))
+        yaxis=dict(side="right", title="価格", showspikes=True, fixedrange=False,
+                   gridcolor="#e5e7eb", zerolinecolor="#d1d5db"))
     return fig
 
 
@@ -290,7 +292,7 @@ def show_pre_day0_waves(result):
     swings = confirmed_pre_day0_swings(path, result["day0"], width)
     st.plotly_chart(wave_figure(pre, swings,
         f"{result['ticker']}｜Day0 {result['day0'].date()} より前", show_bb),
-        use_container_width=True, config={"scrollZoom": True, "displaylogo": False})
+        use_container_width=True, theme=None, config={"scrollZoom": True, "displaylogo": False})
     st.caption(f"左右{width}本で確認できた転換点のみ表示します。末尾{width}本は未確定です。"
                "同種の転換点が続く場合はより極端な点を採用し、同日に高値・安値の両方となる足は順序不明のため除外します。"
                "波は表示用で、Stop計算や売買条件には使用しません。")
@@ -313,8 +315,22 @@ def show_single_case_graphics(result):
     st.markdown("#### グラフ1：基準日前後の価格チャート（事後確認用）")
     st.caption("ここでは『Day0以降に反発したか』『BB下限の近くからどう動いたか』を見ます。")
     if path is not None and not path.empty:
-        price_chart = path.set_index(pd.to_datetime(path["日付"]))[["Close", "BB_Lower", "BB_Middle", "BB_Upper"]]
-        st.line_chart(price_chart, use_container_width=True)
+        fig = wave_figure(path, pd.DataFrame(),
+            f"{result['ticker']}｜基準日前後のローソク足とBBバンド")
+        dates = pd.to_datetime(path["日付"]).dt.strftime("%Y-%m-%d").tolist()
+        day0_text = pd.Timestamp(result["day0"]).strftime("%Y-%m-%d")
+        if day0_text in dates:
+            # Category axes use numeric category positions for the reference line.
+            day0_pos = dates.index(day0_text)
+            fig.add_shape(type="line", xref="x", yref="paper",
+                x0=day0_pos, x1=day0_pos, y0=0, y1=1,
+                line=dict(color="black", width=2, dash="dash"))
+            fig.add_annotation(x=day0_pos, y=1, xref="x", yref="paper",
+                text=f"Day0 {day0_text}", showarrow=False,
+                yshift=15, font=dict(color="black"), bgcolor="white")
+        st.plotly_chart(fig, use_container_width=True, theme=None,
+            config={"scrollZoom": True, "displaylogo": False})
+        st.caption("黒の破線が基準日Day0です。緑は上昇足、赤は下降足。ドラッグで移動、スクロールで拡大・縮小できます。")
     else:
         st.info("価格チャート用のデータがありません。")
 
