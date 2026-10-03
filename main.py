@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from io import StringIO
 import hashlib
+import numpy as np
 import pandas as pd
 import streamlit as st
 from case_study_core import (
@@ -14,171 +15,433 @@ from case_study_core import (
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
-st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋蓄積ケースの比較診断を強化")
-st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。v2.3ではv2.2の全機能を残したまま、計算可能率・銘柄等重み・同一ケース差・価格構造1R分布を追加します。")
+st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋初心者向けグラフィック表示を追加")
+st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。AI売買判定は行いません。")
 
 if "case_ledger" not in st.session_state:
-    st.session_state.case_ledger=empty_case_ledger()
+    st.session_state.case_ledger = empty_case_ledger()
 if "current_result" not in st.session_state:
-    st.session_state.current_result=None
+    st.session_state.current_result = None
 if "current_settings" not in st.session_state:
-    st.session_state.current_settings=None
+    st.session_state.current_settings = None
 if "loaded_ledger_hash" not in st.session_state:
-    st.session_state.loaded_ledger_hash=None
+    st.session_state.loaded_ledger_hash = None
 
-with st.expander("v2.3 複数ケース台帳・研究診断の使い方", expanded=True):
-    st.write("① 今まで通り1ケースを完全分析します。② 結果下部の『今回のケースを比較台帳に追加』を押します。③ 別の銘柄・別のDay0を分析して追加します。④ 20営業日Net Rを同じ評価基準で比較します。")
-    st.write("台帳CSVをダウンロードしておけば、Streamlitを開き直した後も『台帳CSVを読み込む』から続きができます。")
-    st.write("v2.2で保存したCSVはそのまま読み込めます。v2.3では銘柄ごとのケース数が違う影響や、価格構造StopとATR Stopの同一ケース差も確認できます。")
-    st.warning("比較件数が少ない段階の平均Rは結論ではありません。Stop方式やATR倍率を自動採用する機能ではありません。0.25 / 0.50 / 1.00 ATRの区分も診断表示だけです。")
+
+with st.expander("このアプリの見方（初心者向け）", expanded=True):
+    st.write("**まず見る順番は4つだけです。**")
+    st.write("① **価格チャート**で『BB下限付近から反発したか』を見る")
+    st.write("② **1RとATRの比較**で『Stop幅が狭すぎないか』を見る")
+    st.write("③ **20営業日の結果比較**で『どのStop方式が結果として良かったか』を見る")
+    st.write("④ ケースを追加したら、**蓄積ケースの比較グラフ**で『銘柄をまたいでも傾向があるか』を見る")
+    st.warning("このアプリは『自動で正解を決める』ものではありません。グラフで見やすくする研究用ツールです。")
+
 
 st.subheader("0. 複数ケース比較台帳")
-u1,u2=st.columns([2,1])
+u1, u2 = st.columns([2, 1])
 with u1:
-    uploaded=st.file_uploader("以前保存したケース台帳CSVを読み込む（任意）",type=["csv"])
+    uploaded = st.file_uploader("以前保存したケース台帳CSVを読み込む（任意）", type=["csv"])
 with u2:
-    if st.button("台帳を空にする",use_container_width=True):
-        st.session_state.case_ledger=empty_case_ledger(); st.session_state.loaded_ledger_hash=None
+    if st.button("台帳を空にする", use_container_width=True):
+        st.session_state.case_ledger = empty_case_ledger()
+        st.session_state.loaded_ledger_hash = None
         st.success("比較台帳を空にしました。")
 if uploaded is not None:
-    raw=uploaded.getvalue(); h=hashlib.sha256(raw).hexdigest()
-    if h!=st.session_state.loaded_ledger_hash:
+    raw = uploaded.getvalue()
+    h = hashlib.sha256(raw).hexdigest()
+    if h != st.session_state.loaded_ledger_hash:
         try:
-            incoming=pd.read_csv(StringIO(raw.decode("utf-8-sig")))
-            st.session_state.case_ledger=merge_case_ledgers(st.session_state.case_ledger,incoming)
-            st.session_state.loaded_ledger_hash=h
+            incoming = pd.read_csv(StringIO(raw.decode("utf-8-sig")))
+            st.session_state.case_ledger = merge_case_ledgers(st.session_state.case_ledger, incoming)
+            st.session_state.loaded_ledger_hash = h
             st.success(f"台帳CSVを読み込みました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
         except Exception as e:
             st.error(f"台帳CSVを読み込めませんでした: {e}")
 
-ledger=normalize_case_ledger(st.session_state.case_ledger)
-case_count=ledger["Case_ID"].nunique() if not ledger.empty else 0
-ticker_count=ledger["銘柄"].nunique() if not ledger.empty else 0
-st.write(f"現在の比較台帳: **{case_count}ケース / {ticker_count}銘柄**")
+ledger = normalize_case_ledger(st.session_state.case_ledger)
+case_count = ledger["Case_ID"].nunique() if not ledger.empty else 0
+ticker_count = ledger["銘柄"].nunique() if not ledger.empty else 0
+m1, m2 = st.columns(2)
+m1.metric("現在の比較ケース数", f"{case_count}")
+m2.metric("現在の比較銘柄数", f"{ticker_count}")
 if not ledger.empty:
-    st.download_button("比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_3.csv",mime="text/csv",use_container_width=True)
+    st.download_button(
+        "比較台帳CSVを保存",
+        data=ledger.to_csv(index=False, float_format="%.6f").encode("utf-8-sig"),
+        file_name="bb_case_ledger_v2_4.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 st.divider()
 st.subheader("1. 銘柄と分析期間")
-c1,c2=st.columns(2)
-with c1: ticker=st.text_input("銘柄コード", value="COST", help="例: COST / AAPL / NVDA / 6857.T")
-with c2: case_date=st.date_input("BB下限付近の基準日（Day0）", value=date.today()-timedelta(days=30))
-c3,c4=st.columns(2)
-with c3: analysis_start=st.date_input("基準日前の分析開始日", value=date.today()-timedelta(days=120))
-with c4: analysis_end=st.date_input("基準日後の分析終了日", value=date.today())
+c1, c2 = st.columns(2)
+with c1:
+    ticker = st.text_input("銘柄コード", value="COST", help="例: COST / AAPL / NVDA / 6857.T")
+with c2:
+    case_date = st.date_input("BB下限付近の基準日（Day0）", value=date.today() - timedelta(days=30))
+c3, c4 = st.columns(2)
+with c3:
+    analysis_start = st.date_input("基準日前の分析開始日", value=date.today() - timedelta(days=120))
+with c4:
+    analysis_end = st.date_input("分析終了日", value=date.today())
 
 st.subheader("2. 1R・Stopの比較条件")
-c5,c6,c7=st.columns(3)
-with c5: atr_period=st.number_input("ATR期間",5,100,14,1,help="ATR = Average True Range。直近の実際の値幅を使うボラティリティ指標です。")
-with c6: atr_multipliers_text=st.text_input("比較するATR倍率",value="1.0,1.5,2.0",help="カンマ区切り。例: 1.0,1.5,2.0,2.5")
-with c7: selected_atr_multiplier=st.number_input("資金管理で主に使うATR倍率",0.1,10.0,1.5,0.1,format="%.1f")
+c5, c6, c7 = st.columns(3)
+with c5:
+    atr_period = st.number_input("ATR期間", 5, 100, 14, 1, help="ATR = Average True Range。直近の値幅の大きさです。")
+with c6:
+    atr_multipliers_text = st.text_input("比較するATR倍率", value="1.0,1.5,2.0", help="カンマ区切り。例: 1.0,1.5,2.0,2.5")
+with c7:
+    selected_atr_multiplier = st.number_input("資金管理で主に使うATR倍率", 0.1, 10.0, 1.5, 0.1, format="%.1f")
 
 st.subheader("3. 資金管理")
-st.caption("総資金・予算は資金通貨で入力します。米国株を円資金で見る場合は、換算レートに『1 USD = 何円』を入力します。日本株を円で見る場合は1.0です。")
-c8,c9,c10=st.columns(3)
-with c8: total_capital=st.number_input("総資金",min_value=0.0,value=1000000.0,step=10000.0,format="%.2f")
-with c9: symbol_budget=st.number_input("この1銘柄に使える予算",min_value=0.0,value=300000.0,step=10000.0,format="%.2f")
-with c10: risk_pct=st.number_input("1取引の許容損失（総資金に対する%）",0.01,100.0,1.0,0.1,format="%.2f")
-c11,c12=st.columns(2)
-with c11: quote_to_capital_fx=st.number_input("株価通貨→資金通貨 換算レート",min_value=0.000001,value=1.0,step=0.1,format="%.4f",help="例: COSTがUSD、資金をJPYで見るなら1 USD=150 JPYのとき150。日本株JPYなら1。")
-with c12: capital_currency=st.text_input("資金通貨の表示名",value="JPY",help="例: JPY / USD。表示用です。")
+st.caption("米国株を円資金で見る場合は、換算レートに『1 USD = 何円』を入力してください。日本株を円で見る場合は1.0です。")
+c8, c9, c10 = st.columns(3)
+with c8:
+    total_capital = st.number_input("総資金", min_value=0.0, value=1000000.0, step=10000.0, format="%.2f")
+with c9:
+    symbol_budget = st.number_input("この1銘柄に使える予算", min_value=0.0, value=300000.0, step=10000.0, format="%.2f")
+with c10:
+    risk_pct = st.number_input("1取引の許容損失（総資金に対する%）", 0.01, 100.0, 1.0, 0.1, format="%.2f")
+c11, c12 = st.columns(2)
+with c11:
+    quote_to_capital_fx = st.number_input("株価通貨→資金通貨 換算レート", min_value=0.000001, value=1.0, step=0.1, format="%.4f")
+with c12:
+    capital_currency = st.text_input("資金通貨の表示名", value="JPY", help="例: JPY / USD")
 
 st.subheader("4. 売買コスト")
-c13,c14=st.columns(2)
-with c13: commission_pct=st.number_input("手数料率（片道・%）",0.0,5.0,0.10,0.01,format="%.2f")
-with c14: slippage_pct=st.number_input("スリッページ率（片道・%）",0.0,5.0,0.10,0.01,format="%.2f")
-run=st.button("この条件で完全分析",type="primary",use_container_width=True)
+c13, c14 = st.columns(2)
+with c13:
+    commission_pct = st.number_input("手数料率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f")
+with c14:
+    slippage_pct = st.number_input("スリッページ率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f")
 
-def csv_text(title,df):
-    if df is None or df.empty: return f"【{title}】\n表示対象がありません。"
-    return f"【{title}】\n"+df.to_csv(index=False,float_format="%.4f").rstrip()
+run = st.button("この条件で完全分析", type="primary", use_container_width=True)
 
-def section(num,title,df,expanded=False):
-    with st.expander(f"{num} {title}",expanded=expanded):
-        if df is None or df.empty: st.write("表示対象がありません。")
-        else: st.dataframe(df.round(4),use_container_width=True,hide_index=True)
-        st.code(csv_text(f"{num} {title}",df),language=None)
+
+def csv_text(title, df):
+    if df is None or df.empty:
+        return f"【{title}】\n表示対象がありません。"
+    return f"【{title}】\n" + df.to_csv(index=False, float_format="%.4f").rstrip()
+
+
+def section(num, title, df, expanded=False):
+    with st.expander(f"{num} {title}", expanded=expanded):
+        if df is None or df.empty:
+            st.write("表示対象がありません。")
+        else:
+            st.dataframe(df.round(4), use_container_width=True, hide_index=True)
+        st.code(csv_text(f"{num} {title}", df), language=None)
+
 
 def parse_multipliers(text):
-    vals=[]
+    vals = []
     for x in str(text).split(","):
         try:
-            v=float(x.strip())
-            if v>0: vals.append(v)
-        except: pass
+            v = float(x.strip())
+            if v > 0:
+                vals.append(v)
+        except Exception:
+            pass
     vals.append(float(selected_atr_multiplier))
-    return sorted(set(round(v,4) for v in vals))
+    return sorted(set(round(v, 4) for v in vals))
+
+
+def fmt_num(x, digits=2, suffix=""):
+    if pd.isna(x):
+        return "—"
+    return f"{float(x):.{digits}f}{suffix}"
+
+
+def first_row(df):
+    if df is None or df.empty:
+        return None
+    return df.iloc[0]
+
+
+def beginner_signal_summary(result, selected_multiplier, currency):
+    diag = result.get("risk_diagnostic", pd.DataFrame())
+    pos = result.get("position_sizing", pd.DataFrame())
+    outcomes = result.get("outcomes", pd.DataFrame())
+    selected_name = f"ATR×{float(selected_multiplier):g}"
+    rows = []
+    for sig in ["下落停止", "反発開始"]:
+        d = diag[diag["シグナル"] == sig] if not diag.empty else pd.DataFrame()
+        p = pos[pos["シグナル"] == sig] if not pos.empty else pd.DataFrame()
+        o20 = outcomes[(outcomes["シグナル"] == sig) & (outcomes["評価期間"] == "20営業日")] if not outcomes.empty else pd.DataFrame()
+        d0 = first_row(d)
+        p0 = first_row(p)
+        best = first_row(o20.sort_values("Net_R", ascending=False)) if not o20.empty else None
+        sel = first_row(o20[o20["Stop方式"] == selected_name]) if not o20.empty else None
+        if d0 is None and p0 is None and best is None and sel is None:
+            continue
+        rows.append({
+            "シグナル": sig,
+            "価格構造1R_%": d0.get("1R_%") if d0 is not None else np.nan,
+            "価格構造1R_ATR倍率": d0.get("1R_ATR倍率") if d0 is not None else np.nan,
+            "価格構造1R診断": d0.get("1R診断") if d0 is not None else "—",
+            "採用購入株数": p0.get("採用購入株数") if p0 is not None else np.nan,
+            f"Stop時想定損失_{currency}": p0.get(f"Stop時推定総損失_{currency}") if p0 is not None else np.nan,
+            "選択Stopの20日結果": sel.get("結果") if sel is not None else "—",
+            "選択Stopの20日Net_R": sel.get("Net_R") if sel is not None else np.nan,
+            "20日で最良のStop方式": best.get("Stop方式") if best is not None else "—",
+            "20日で最良のNet_R": best.get("Net_R") if best is not None else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
+def show_beginner_cards(result, selected_multiplier, currency):
+    summary = beginner_signal_summary(result, selected_multiplier, currency)
+    outcomes = result.get("outcomes", pd.DataFrame())
+    o20 = outcomes[outcomes["評価期間"] == "20営業日"] if outcomes is not None and not outcomes.empty else pd.DataFrame()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("分析対象", str(result["ticker"]))
+    col2.metric("Day0", str(result["day0"].date()))
+    col3.metric("20営業日の比較本数", f"{len(o20)}")
+    best_all = o20["Net_R"].max() if not o20.empty else np.nan
+    col4.metric("20営業日の最良Net R", fmt_num(best_all, 2, " R"))
+
+    if summary.empty:
+        st.info("初心者向けサマリーを作れるデータがありません。")
+        return
+
+    st.markdown("#### まず確認する結論（シグナル別）")
+    for _, row in summary.iterrows():
+        signal = row["シグナル"]
+        stop_loss = fmt_num(row.get(f"Stop時想定損失_{currency}"), 0, f" {currency}")
+        qty = "—" if pd.isna(row.get("採用購入株数")) else f"{int(row.get('採用購入株数'))} 株"
+        best_stop = row.get("20日で最良のStop方式", "—")
+        best_r = fmt_num(row.get("20日で最良のNet_R"), 2, " R")
+        selected_r = fmt_num(row.get("選択Stopの20日Net_R"), 2, " R")
+        diag = row.get("価格構造1R診断", "—")
+        status_text = ""
+        if pd.notna(row.get("価格構造1R_ATR倍率")):
+            atr_ratio = float(row.get("価格構造1R_ATR倍率"))
+            if atr_ratio < 0.25:
+                status_text = "⚠️ かなり狭いStopです"
+            elif atr_ratio < 0.50:
+                status_text = "⚠️ 狭めのStopです"
+            elif atr_ratio < 1.00:
+                status_text = "🟡 ATRよりやや狭いStopです"
+            else:
+                status_text = "🟢 ATR以上の幅があります"
+        with st.container(border=True):
+            st.markdown(f"**{signal}**")
+            st.write(f"- 価格構造1R診断: **{diag}**  {status_text}")
+            st.write(f"- 資金管理で採用される購入株数: **{qty}**")
+            st.write(f"- そのStopに到達した場合の想定損失: **{stop_loss}**")
+            st.write(f"- 選択中ATR Stop（ATR×{float(selected_multiplier):g}）の20営業日Net R: **{selected_r}**")
+            st.write(f"- 20営業日で最も良かったStop方式: **{best_stop}** / **{best_r}**")
+
+    st.dataframe(summary.round(4), use_container_width=True, hide_index=True)
+
+
+def show_single_case_graphics(result):
+    path = result.get("path", pd.DataFrame())
+    visual = result.get("risk_visual", pd.DataFrame())
+    outcomes = result.get("outcomes", pd.DataFrame())
+
+    st.markdown("#### グラフ1：価格チャート（Close と BBバンド）")
+    st.caption("ここでは『Day0以降に反発したか』『BB下限の近くからどう動いたか』を見ます。")
+    if path is not None and not path.empty:
+        price_chart = path.set_index(pd.to_datetime(path["日付"]))[["Close", "BB_Lower", "BB_Middle", "BB_Upper"]]
+        st.line_chart(price_chart, use_container_width=True)
+    else:
+        st.info("価格チャート用のデータがありません。")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### グラフ2：Stop幅（1R%）比較")
+        st.caption("棒が高いほど、EntryからStopまでの幅が広いです。")
+        if visual is not None and not visual.empty:
+            st.bar_chart(visual.set_index("方式")[["1R_%"]], use_container_width=True)
+        else:
+            st.info("1R比較データがありません。")
+    with c2:
+        st.markdown("#### グラフ3：1RのATR倍率比較")
+        st.caption("1.0付近ならATR1本分、1.5ならATR×1.5、2.0ならATR×2の幅です。")
+        if visual is not None and not visual.empty and "1R_ATR倍率" in visual.columns:
+            st.bar_chart(visual.set_index("方式")[["1R_ATR倍率"]], use_container_width=True)
+        else:
+            st.info("ATR倍率比較データがありません。")
+
+    st.markdown("#### グラフ4：20営業日の実際のNet R比較")
+    st.caption("プラスなら0より上、マイナスなら0より下になります。")
+    if outcomes is not None and not outcomes.empty:
+        o20 = outcomes[outcomes["評価期間"] == "20営業日"].copy()
+        if not o20.empty:
+            o20["方式"] = o20["シグナル"].astype(str) + "｜" + o20["Stop方式"].astype(str)
+            st.bar_chart(o20.set_index("方式")[["Net_R"]], use_container_width=True)
+        else:
+            st.info("20営業日の結果データがありません。")
+    else:
+        st.info("実際の結果データがありません。")
+
+
+def show_ledger_graphics(ledger_df):
+    st.subheader("14. 蓄積ケースのグラフ比較")
+    st.caption("複数ケースを追加した後は、ここで『どのStop方式に傾向があるか』をざっくり確認します。")
+
+    case_list = case_ledger_case_list(ledger_df)
+    summary20 = case_ledger_summary(ledger_df, "20営業日")
+    all20 = case_ledger_all_ticker_summary(ledger_df, "20営業日")
+    comp20 = case_ledger_computability_summary(ledger_df, "20営業日")
+    risk_dist = case_ledger_structure_risk_distribution(ledger_df)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("比較ケース数", f"{ledger_df['Case_ID'].nunique()}")
+    m2.metric("比較銘柄数", f"{ledger_df['銘柄'].nunique()}")
+    net_count = int(summary20.get("NetR計算可能", pd.Series(dtype=float)).sum()) if not summary20.empty else 0
+    m3.metric("20営業日 NetR計算可能件数", f"{net_count}")
+    avg_r = all20["Net平均R"].mean() if not all20.empty and "Net平均R" in all20.columns else np.nan
+    m4.metric("全体の平均Net R（参考）", fmt_num(avg_r, 2, " R"))
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.markdown("#### グラフ5：銘柄ごとの蓄積ケース数")
+        if case_list is not None and not case_list.empty:
+            counts = case_list.groupby("銘柄").size().to_frame("ケース数")
+            st.bar_chart(counts, use_container_width=True)
+        else:
+            st.info("蓄積ケース一覧がありません。")
+    with g2:
+        st.markdown("#### グラフ6：20営業日 全銘柄参考集計（Net平均R）")
+        if all20 is not None and not all20.empty:
+            all20c = all20.copy()
+            all20c["方式"] = all20c["シグナル"].astype(str) + "｜" + all20c["Stop方式"].astype(str)
+            st.bar_chart(all20c.set_index("方式")[["Net平均R"]], use_container_width=True)
+        else:
+            st.info("全銘柄参考集計がありません。")
+
+    g3, g4 = st.columns(2)
+    with g3:
+        st.markdown("#### グラフ7：銘柄別 20営業日 Net平均R")
+        if summary20 is not None and not summary20.empty:
+            s = summary20.copy()
+            s["方式"] = s["銘柄"].astype(str) + "｜" + s["シグナル"].astype(str) + "｜" + s["Stop方式"].astype(str)
+            st.bar_chart(s.set_index("方式")[["Net平均R"]], use_container_width=True)
+        else:
+            st.info("銘柄別比較データがありません。")
+    with g4:
+        st.markdown("#### グラフ8：Net R計算可能率（20営業日）")
+        if comp20 is not None and not comp20.empty:
+            c = comp20.copy()
+            c["方式"] = c["銘柄"].astype(str) + "｜" + c["シグナル"].astype(str) + "｜" + c["Stop方式"].astype(str)
+            st.bar_chart(c.set_index("方式")[["NetR計算可能率_%"]], use_container_width=True)
+        else:
+            st.info("計算可能率データがありません。")
+
+    st.markdown("#### グラフ9：価格構造1RのATR比帯の分布")
+    if risk_dist is not None and not risk_dist.empty:
+        cols = [
+            "<0.25ATR件数",
+            "0.25～<0.50ATR件数",
+            "0.50～<1.00ATR件数",
+            ">=1.00ATR件数",
+        ]
+        existing = [c for c in cols if c in risk_dist.columns]
+        if existing:
+            rd = risk_dist.copy()
+            rd["対象"] = rd["銘柄"].astype(str) + "｜" + rd["シグナル"].astype(str)
+            st.bar_chart(rd.set_index("対象")[existing], use_container_width=True)
+        else:
+            st.info("ATR比帯の分布列がありません。")
+    else:
+        st.info("ATR比帯分布データがありません。")
+
 
 if run:
-    if analysis_start>case_date: st.error("分析開始日はBB基準日以前にしてください。"); st.stop()
-    if analysis_end<case_date: st.error("分析終了日はBB基準日以降にしてください。"); st.stop()
-    if symbol_budget>total_capital and total_capital>0: st.warning("1銘柄予算が総資金を上回っています。株数計算では入力された1銘柄予算を使用します。")
-    multipliers=parse_multipliers(atr_multipliers_text)
+    if analysis_start > case_date:
+        st.error("分析開始日はBB基準日以前にしてください。")
+        st.stop()
+    if analysis_end < case_date:
+        st.error("分析終了日はBB基準日以降にしてください。")
+        st.stop()
+    if symbol_budget > total_capital and total_capital > 0:
+        st.warning("1銘柄予算が総資金を上回っています。株数計算では入力された1銘柄予算を使用します。")
+    multipliers = parse_multipliers(atr_multipliers_text)
     with st.spinner("株価データを取得し、前後期間・ATR・資金管理まで計算しています..."):
-        result=run_case_study(ticker,case_date,analysis_start,analysis_end,commission_pct/100,slippage_pct/100,int(atr_period),multipliers,float(selected_atr_multiplier),float(total_capital),float(symbol_budget),float(risk_pct),float(quote_to_capital_fx),capital_currency.strip() or "資金通貨")
-    if result.get("error"): st.error(result["error"]); st.stop()
-    st.session_state.current_result=result
-    st.session_state.current_settings={"commission":commission_pct/100,"slippage":slippage_pct/100}
+        result = run_case_study(
+            ticker, case_date, analysis_start, analysis_end,
+            commission_pct / 100, slippage_pct / 100,
+            int(atr_period), multipliers, float(selected_atr_multiplier),
+            float(total_capital), float(symbol_budget), float(risk_pct),
+            float(quote_to_capital_fx), capital_currency.strip() or "資金通貨"
+        )
+    if result.get("error"):
+        st.error(result["error"])
+        st.stop()
+    st.session_state.current_result = result
+    st.session_state.current_settings = {"commission": commission_pct / 100, "slippage": slippage_pct / 100}
 
-result=st.session_state.current_result
+result = st.session_state.current_result
 if result:
     st.success(f"{result['ticker']} ｜ Day0 {result['day0'].date()} ｜ 分析期間 {result['analysis_start'].date()} ～ {result['analysis_end'].date()}")
-    if result["date_note"]!="入力日を使用": st.warning(result["date_note"])
+    if result["date_note"] != "入力日を使用":
+        st.warning(result["date_note"])
 
-    st.subheader("5. Day0と前後環境")
-    section(1,"ケース日・BB下限位置・ATR・市場状態",result["day0_summary"],True)
-    section(2,"基準日前の環境サマリー",result["pre_summary"],False)
-    st.subheader("6. Day0～Day3 シグナル")
-    section(3,"4営業日シグナル監査",result["signal_window"],True)
-    st.subheader("7. 価格構造StopとATR型1R")
-    section(4,"Stop・1R比較",result["risk_design"],True)
-    diag=result["risk_diagnostic"]
+    st.subheader("5. まず最初に見るダッシュボード")
+    st.caption("このセクションだけで、何を確認すべきかが分かるようにしています。")
+    show_beginner_cards(result, selected_atr_multiplier, capital_currency)
+    show_single_case_graphics(result)
+
+    st.divider()
+    st.subheader("6. 詳細データ（従来表示）")
+    section(1, "ケース日・BB下限位置・ATR・市場状態", result["day0_summary"], True)
+    section(2, "基準日前の環境サマリー", result["pre_summary"], False)
+    section(3, "4営業日シグナル監査", result["signal_window"], True)
+    section(4, "Stop・1R比較", result["risk_design"], True)
+    diag = result["risk_diagnostic"]
     if diag is not None and not diag.empty:
-        bad=diag[diag["1R診断"].isin(["極端に狭い（価格構造1R<0.25ATR）","狭い（価格構造1R<0.50ATR）"])]
-        if not bad.empty: st.warning("価格構造Stopの1RがATRに対して非常に狭いケースがあります。これは自動除外ではなく、確認用の警告です。")
-    section(5,"価格構造1R・ATR比診断",diag,True)
-    st.subheader("8. 資金管理・購入株数")
-    section(6,"予算・許容損失から購入株数を計算",result["position_sizing"],True)
-    section(7,"購入後のStop・Target金額損益",result["money_scenarios"],True)
-    st.subheader("9. 実際の基準日後の結果")
-    section(8,"Stop方式別・実際の結果",result["outcomes"],True)
-    st.subheader("10. 基準日前後の価格経路")
-    path=result["path"]
-    if path is not None and not path.empty: st.line_chart(path.set_index(pd.to_datetime(path["日付"]))[["Close","BB_Lower","BB_Middle","BB_Upper"]],use_container_width=True)
-    section(9,"設定期間の価格経路",path,False)
-    st.subheader("11. 1R幅の視覚比較")
-    visual=result["risk_visual"]
-    if visual is not None and not visual.empty: st.bar_chart(visual.set_index("方式")[["1R_%"]],use_container_width=True)
-    section(10,"1R幅・ATR換算比較",visual,False)
+        bad = diag[diag["1R診断"].isin(["極端に狭い（価格構造1R<0.25ATR）", "狭い（価格構造1R<0.50ATR）"])]
+        if not bad.empty:
+            st.warning("価格構造Stopの1RがATRに対して狭いケースがあります。グラフ2・3で確認してください。")
+    section(5, "価格構造1R・ATR比診断", diag, True)
+    section(6, "予算・許容損失から購入株数を計算", result["position_sizing"], True)
+    section(7, "購入後のStop・Target金額損益", result["money_scenarios"], True)
+    section(8, "Stop方式別・実際の結果", result["outcomes"], True)
+    section(9, "設定期間の価格経路", result["path"], False)
+    section(10, "1R幅・ATR換算比較", result["risk_visual"], False)
 
-    st.divider(); st.subheader("12. 今回のケースを比較台帳へ追加")
-    st.write("このボタンでは売買ルールを変更せず、今回の分析結果を比較用CSV台帳へ追加するだけです。同じ銘柄・同じDay0を再追加した場合は最新結果で置き換えます。")
-    if st.button("今回のケースを比較台帳に追加",type="primary",use_container_width=True):
-        settings=st.session_state.current_settings or {"commission":0.001,"slippage":0.001}
-        new_rows=build_case_ledger_rows(result,settings["commission"],settings["slippage"])
-        st.session_state.case_ledger=merge_case_ledgers(st.session_state.case_ledger,new_rows)
+    st.divider()
+    st.subheader("7. 今回のケースを比較台帳へ追加")
+    st.write("このボタンでは、今回の分析結果を比較用CSV台帳へ追加するだけです。同じ銘柄・同じDay0を再追加した場合は最新結果で置き換えます。")
+    if st.button("今回のケースを比較台帳に追加", type="primary", use_container_width=True):
+        settings = st.session_state.current_settings or {"commission": 0.001, "slippage": 0.001}
+        new_rows = build_case_ledger_rows(result, settings["commission"], settings["slippage"])
+        st.session_state.case_ledger = merge_case_ledgers(st.session_state.case_ledger, new_rows)
         st.success(f"{result['ticker']} / Day0 {result['day0'].date()} を追加しました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
 
-st.divider(); st.subheader("13. 複数銘柄・複数BB下限ケース比較")
-ledger=normalize_case_ledger(st.session_state.case_ledger)
+st.divider()
+st.subheader("8. 複数銘柄・複数BB下限ケース比較")
+ledger = normalize_case_ledger(st.session_state.case_ledger)
 if ledger.empty:
     st.info("まだ比較台帳にケースがありません。1ケースを分析して『今回のケースを比較台帳に追加』を押してください。")
 else:
-    st.download_button("最新の比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_3.csv",mime="text/csv",use_container_width=True,key="download_bottom")
-    section(11,"蓄積ケース一覧",case_ledger_case_list(ledger),True)
-    section(12,"20営業日・銘柄別Stop比較",case_ledger_summary(ledger,"20営業日"),True)
-    section(13,"20営業日・全銘柄参考集計",case_ledger_all_ticker_summary(ledger,"20営業日"),False)
-    section(14,"蓄積ケース明細",case_ledger_detail(ledger),False)
+    st.download_button(
+        "最新の比較台帳CSVを保存",
+        data=ledger.to_csv(index=False, float_format="%.6f").encode("utf-8-sig"),
+        file_name="bb_case_ledger_v2_4.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="download_bottom",
+    )
 
-    st.subheader("14. v2.3 蓄積ケース研究診断")
-    st.caption("以下は売買条件の自動採用ではなく、蓄積データの偏り・Stop差・1R幅を確認する研究診断です。")
-    section(15,"20営業日・Net R計算可能率監査",case_ledger_computability_summary(ledger,"20営業日"),True)
-    section(16,"20営業日・銘柄等重み参考集計",case_ledger_equal_ticker_summary(ledger,"20営業日"),True)
-    section(17,"20営業日・価格構造Stopとの差（同一ケース）",case_ledger_paired_vs_structure(ledger,"20営業日"),True)
-    section(18,"価格構造1R・ATR倍率分布",case_ledger_structure_risk_distribution(ledger),True)
-    section(19,"価格構造1R・ATR比ケース明細",case_ledger_structure_risk_cases(ledger),False)
+    show_ledger_graphics(ledger)
 
-    st.info("【v2.3の読み方】16番は各銘柄を同じ1票で平均します。17番は同じCase_ID・同じシグナル内だけでATR方式と価格構造を比較します。18・19番のATR比区分は診断であり、除外条件ではありません。")
-    st.warning("【未採用】蓄積結果で平均Rが高いStop方式を、そのまま採用しません。ケース数、銘柄差、時期差、未決着、同日順序不明を確認し、必要なら別の時系列検証へ進みます。")
+    section(11, "蓄積ケース一覧", case_ledger_case_list(ledger), True)
+    section(12, "20営業日・銘柄別Stop比較", case_ledger_summary(ledger, "20営業日"), True)
+    section(13, "20営業日・全銘柄参考集計", case_ledger_all_ticker_summary(ledger, "20営業日"), False)
+    section(14, "蓄積ケース明細", case_ledger_detail(ledger), False)
+    section(15, "20営業日・Net R計算可能率監査", case_ledger_computability_summary(ledger, "20営業日"), True)
+    section(16, "20営業日・銘柄等重み参考集計", case_ledger_equal_ticker_summary(ledger, "20営業日"), True)
+    section(17, "20営業日・価格構造Stopとの差（同一ケース）", case_ledger_paired_vs_structure(ledger, "20営業日"), True)
+    section(18, "価格構造1R・ATR倍率分布", case_ledger_structure_risk_distribution(ledger), True)
+    section(19, "価格構造1R・ATR比ケース明細", case_ledger_structure_risk_cases(ledger), False)
 
-st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。v5.3凍結AIには後付けしません。")
+    st.info("【読み方】まず『グラフ6』『グラフ7』でStop方式の傾向をざっくり見て、その後に12～19の表で理由を確認してください。")
+    st.warning("平均Rが高いStop方式を、そのまま採用してはいけません。ケース数、銘柄偏り、未決着、データ不足も一緒に確認してください。")
+
+st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。")
