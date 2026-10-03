@@ -175,9 +175,25 @@ def beginner_signal_summary(result, selected_multiplier, currency):
         p0 = first_row(p)
         best = first_row(o20.sort_values("Net_R", ascending=False)) if not o20.empty else None
         sel = first_row(o20[o20["Stop方式"] == selected_name]) if not o20.empty else None
-        if d0 is None and p0 is None and best is None and sel is None:
-            continue
+        design = result.get("risk_design", pd.DataFrame())
+        q = design[design["シグナル"] == sig] if not design.empty else pd.DataFrame()
+        window = result.get("signal_window", pd.DataFrame())
+        has_signal = not window.empty and sig in window and window[sig].eq(True).any()
+        if not has_signal:
+            status = "Day0～Day3にシグナル未成立"
+            reason = "この条件ではEntry・購入株数・想定損失を計算しません。" if len(window) >= 4 else "観察期間のデータが不足しています。分析終了日を延ばして再分析してください。"
+        elif q.empty or not q["状態"].eq("R計算可能").any():
+            status = "シグナル成立・EntryまたはStop設計不可"
+            reason = " / ".join(q["状態"].dropna().astype(str).unique()) if not q.empty else "設計データなし"
+        elif p0 is None:
+            status = "シグナル成立・選択ATRの株数計算なし"
+            reason = "選択したATR倍率の設計がありません。比較ATR倍率とATR期間を確認して再分析してください。"
+        else:
+            status = "シグナル成立・株数計算済み"
+            reason = "20営業日の結果が未確定の場合は、将来データ不足などを結果欄で確認してください。"
         rows.append({
+            "判定状況": status,
+            "確認事項": reason,
             "シグナル": sig,
             "価格構造1R_%": d0.get("1R_%") if d0 is not None else np.nan,
             "価格構造1R_ATR倍率": d0.get("1R_ATR倍率") if d0 is not None else np.nan,
@@ -216,9 +232,15 @@ def show_beginner_cards(result, selected_multiplier, currency):
         min_value=0.0, value=0.0, step=0.1, format="%.4f", key="loss_display_usd_jpy",
         help="使用したい為替レートを入力してください。0は未入力です。株数やStopの計算には使わず、表示だけに使用します。")
     st.caption("円・ドル併記は上の入力レートで換算します。自動取得の為替レートではありません。")
-    if summary.empty:
-        st.info("初心者向けサマリーを作れるデータがありません。")
-        return
+    d0 = first_row(result.get("day0_summary", pd.DataFrame()))
+    if d0 is not None:
+        st.markdown("#### 基準日の価格とBB状態")
+        a, b, c = st.columns(3)
+        a.metric("Day0終値", fmt_num(d0.get("Close")))
+        b.metric("Day0高値", fmt_num(d0.get("High")))
+        c.metric("Day0安値", fmt_num(d0.get("Low")))
+        st.write(f"BB状態：**{d0.get('BB状態', '—')}**")
+    st.caption("シグナル未成立でも、下の価格チャート・高値安値の波・判定状況を確認できます。")
 
     st.markdown("#### まず確認する結論（シグナル別）")
     for _, row in summary.iterrows():
@@ -250,6 +272,8 @@ def show_beginner_cards(result, selected_multiplier, currency):
                 status_text = "🟢 ATR以上の幅があります"
         with st.container(border=True):
             st.markdown(f"**{signal}**")
+            st.write(f"判定状況：**{row['判定状況']}**")
+            st.write(row["確認事項"])
             st.write(f"- 価格構造1R診断: **{diag}**  {status_text}")
             st.write(f"- 資金管理で採用される購入株数: **{qty}**")
             st.write(f"- そのStopに到達した場合の想定損失: **{stop_loss}**")
