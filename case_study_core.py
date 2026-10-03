@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.0.0"
+APP_VERSION="2.1.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -72,13 +72,26 @@ def build_risk_design(df,d,mults):
     rows=[]; p0=df.index.get_loc(d)
     for col,label in [("Decline_Stop","下落停止"),("Rebound_Start","反発開始")]:
         p=first_signal(df,d,col)
-        if p is None or p+1>=len(df): rows.append({"シグナル":label,"Stop方式":"-","状態":"Day0～Day3に成立なし、または翌営業日データなし"}); continue
+        if p is None or p+1>=len(df):
+            rows.append({"シグナル":label,"Stop方式":"-","状態":"Day0～Day3に成立なし、または翌営業日データなし"})
+            continue
         entry=float(df.iloc[p+1].Open); atr=float(df.iloc[p].ATR); structure=float(df.iloc[p0:p+1].Low.min())
         methods=[("価格構造",structure,np.nan)]+[(f"ATR×{float(m):g}",entry-atr*float(m),float(m)) for m in mults if pd.notna(atr) and atr>0]
         for name,stop,m in methods:
             risk=entry-stop
-            if risk<=0: continue
-            rows.append({"シグナル":label,"シグナル日":df.index[p].date(),"Entry日":df.index[p+1].date(),"Entry_Open":entry,"Stop方式":name,"ATR倍率":m,"ATR_シグナル日":atr,"Stop":stop,"1R":risk,"1R_%":risk/entry*100,"+1R":entry+risk,"+1.5R":entry+1.5*risk,"+2R":entry+2*risk,"状態":"R計算可能"})
+            if risk<=0:
+                rows.append({"シグナル":label,"シグナル日":df.index[p].date(),"Entry日":df.index[p+1].date(),"Entry_Open":entry,"Stop方式":name,"ATR倍率":m,"ATR_シグナル日":atr,"Stop":stop,"1R":risk,"1R_%":risk/entry*100 if entry else np.nan,"1R_ATR倍率":risk/atr if pd.notna(atr) and atr>0 else np.nan,"1R診断":"R計算不可","状態":"Entry<=StopのためR計算不可"})
+                continue
+            ratio=risk/atr if pd.notna(atr) and atr>0 else np.nan
+            if name=="価格構造":
+                if pd.isna(ratio): diag="ATR比較不可"
+                elif ratio<0.25: diag="極端に狭い（価格構造1R<0.25ATR）"
+                elif ratio<0.50: diag="狭い（価格構造1R<0.50ATR）"
+                elif ratio<1.00: diag="ATR×1未満"
+                else: diag="ATR×1以上"
+            else:
+                diag="ATR固定幅"
+            rows.append({"シグナル":label,"シグナル日":df.index[p].date(),"Entry日":df.index[p+1].date(),"Entry_Open":entry,"Stop方式":name,"ATR倍率":m,"ATR_シグナル日":atr,"Stop":stop,"1R":risk,"1R_%":risk/entry*100,"1R_ATR倍率":ratio,"1R診断":diag,"+1R":entry+risk,"+1.5R":entry+1.5*risk,"+2R":entry+2*risk,"状態":"R計算可能"})
     return pd.DataFrame(rows)
 
 def _hit(df,ep,stop,target,last):
@@ -118,7 +131,7 @@ def position_sizing(design,selected,total,budget,risk_pct,fx,currency,comm,slip)
         entry=float(d.Entry_Open); stop=float(d.Stop); allowed=total*risk_pct/100
         buy=entry*(1+slip); sell=stop*(1-slip); per_buy=buy*(1+comm)*fx; per_loss=(buy-sell+buy*comm+sell*comm)*fx
         by_budget=math.floor(budget/per_buy) if per_buy>0 else 0; by_risk=math.floor(allowed/per_loss) if per_loss>0 else 0; shares=max(0,min(by_budget,by_risk)); loss=per_loss*shares
-        rows.append({"シグナル":d.シグナル,"採用Stop方式":name,"Entry":entry,"Stop":stop,"1R":d["1R"],"1R_%":d["1R_%"],f"総資金_{currency}":total,f"1銘柄予算_{currency}":budget,"許容損失率_%":risk_pct,f"許容損失額_{currency}":allowed,"予算上の最大株数":by_budget,"損失上限からの最大株数":by_risk,"採用購入株数":shares,f"株価ベース購入額_{currency}":entry*shares*fx,f"Entryコスト込必要額_{currency}":per_buy*shares,f"1株Stop推定損失_{currency}":per_loss,f"Stop時推定総損失_{currency}":loss,"Stop時推定総資金損失率_%":loss/total*100 if total else np.nan,"換算レート":fx})
+        rows.append({"シグナル":d.シグナル,"採用Stop方式":name,"Entry":entry,"Stop":stop,"1R":d["1R"],"1R_%":d["1R_%"],"1R_ATR倍率":d.get("1R_ATR倍率",np.nan),f"総資金_{currency}":total,f"1銘柄予算_{currency}":budget,"許容損失率_%":risk_pct,f"許容損失額_{currency}":allowed,"予算上の最大株数":by_budget,"損失上限からの最大株数":by_risk,"採用購入株数":shares,f"株価ベース購入額_{currency}":entry*shares*fx,f"Entryコスト込必要額_{currency}":per_buy*shares,f"1株Stop推定損失_{currency}":per_loss,f"Stop時推定総損失_{currency}":loss,"Stop時推定総資金損失率_%":loss/total*100 if total else np.nan,"換算レート":fx})
     return pd.DataFrame(rows)
 
 def money_scenarios(design,ps,selected,fx,currency,comm,slip):
@@ -138,6 +151,13 @@ def path_table(df,start,end,d):
     if p.empty:return pd.DataFrame()
     return pd.DataFrame({"日付":p.index.date,"Day0区分":["Day0" if x==d else ("前" if x<d else "後") for x in p.index],"Open":p.Open.values,"High":p.High.values,"Low":p.Low.values,"Close":p.Close.values,"BB_Lower":p.BB_Lower.values,"BB_Middle":p.BB_Middle.values,"BB_Upper":p.BB_Upper.values,"ATR":p.ATR.values,"ATR_%":p.ATR_Pct.values,"Day0終値比_%":(p.Close.values/base-1)*100})
 
+def risk_diagnostic(design):
+    if design is None or design.empty:return pd.DataFrame()
+    x=design[design["Stop方式"].eq("価格構造")].copy()
+    if x.empty:return pd.DataFrame()
+    cols=["シグナル","シグナル日","Entry日","Entry_Open","Stop","1R","1R_%","ATR_シグナル日","1R_ATR倍率","1R診断","状態"]
+    return x[[c for c in cols if c in x.columns]].reset_index(drop=True)
+
 def run_case_study(ticker,requested_date,analysis_start,analysis_end,commission=.001,slippage=.001,atr_period=14,atr_multipliers=(1.,1.5,2.),selected_atr_multiplier=1.5,total_capital=1_000_000.,symbol_budget=300_000.,risk_pct=1.,quote_to_capital_fx=1.,capital_currency="JPY"):
     req=pd.Timestamp(requested_date).normalize(); start=pd.Timestamp(analysis_start).normalize(); end=pd.Timestamp(analysis_end).normalize(); today=pd.Timestamp.today().normalize()
     if start>req:return {"error":"分析開始日はBB基準日以前にしてください。"}
@@ -155,5 +175,6 @@ def run_case_study(ticker,requested_date,analysis_start,analysis_end,commission=
     scenarios=money_scenarios(design,ps,selected_atr_multiplier,quote_to_capital_fx,capital_currency,commission,slippage)
     visual=design[design.状態=="R計算可能"].copy() if not design.empty else pd.DataFrame()
     if not visual.empty:
-        visual["方式"]=visual.シグナル.astype(str)+"｜"+visual.Stop方式.astype(str); visual=visual[["方式","Entry_Open","Stop","1R","1R_%","ATR_シグナル日"]]
-    return {"error":None,"ticker":_clean_ticker(ticker),"day0":day0,"date_note":note,"analysis_start":actual_start,"analysis_end":actual_end,"day0_summary":case_summary(df,day0,atr_period),"pre_summary":pre_summary(df,actual_start,day0,atr_period),"signal_window":find_signals(df,day0),"risk_design":design,"position_sizing":ps,"money_scenarios":scenarios,"outcomes":build_outcomes(df,design,actual_end,commission,slippage),"path":path_table(df,actual_start,actual_end,day0),"risk_visual":visual}
+        visual["方式"]=visual.シグナル.astype(str)+"｜"+visual.Stop方式.astype(str)
+        visual=visual[["方式","Entry_Open","Stop","1R","1R_%","ATR_シグナル日","1R_ATR倍率"]]
+    return {"error":None,"ticker":_clean_ticker(ticker),"day0":day0,"date_note":note,"analysis_start":actual_start,"analysis_end":actual_end,"day0_summary":case_summary(df,day0,atr_period),"pre_summary":pre_summary(df,actual_start,day0,atr_period),"signal_window":find_signals(df,day0),"risk_design":design,"risk_diagnostic":risk_diagnostic(design),"position_sizing":ps,"money_scenarios":scenarios,"outcomes":build_outcomes(df,design,actual_end,commission,slippage),"path":path_table(df,actual_start,actual_end,day0),"risk_visual":visual}

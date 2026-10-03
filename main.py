@@ -5,12 +5,13 @@ from case_study_core import APP_VERSION, run_case_study
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
-st.caption(f"Version {APP_VERSION} ｜ 前後期間＋ATR型1R＋資金管理＋購入株数＋金額損益")
+st.caption(f"Version {APP_VERSION} ｜ 前後期間＋ATR型1R＋資金管理＋購入株数＋金額損益＋価格構造1R診断")
 st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。ATRはシグナル確定時点までのデータだけで計算します。")
 
 with st.expander("今回の完全版でできること", expanded=False):
     st.write("分析開始日・BB基準日・分析終了日を自由入力し、価格構造StopとATR型Stopを比較します。総資金・1銘柄予算・許容損失から購入株数を計算し、Stop/+1R/+1.5R/+2Rの金額損益と実際の値動きを確認します。")
-    st.warning("ATR倍率は正解として固定しません。Stop注文はギャップ等で指定価格より不利に約定することがあり、最大損失額は保証値ではありません。")
+    st.write("v2.1では、価格構造Stopの1RがATRに対して極端に狭いケースを見落とさないため、1R÷ATRの診断表示を追加しました。")
+    st.warning("診断は警告表示だけです。価格構造Stopを自動的にATR Stopへ変更したり、狭い1Rを自動除外したりはしません。")
 
 st.subheader("1. 銘柄と分析期間")
 c1,c2=st.columns(2)
@@ -70,29 +71,46 @@ if run:
     with st.spinner("株価データを取得し、前後期間・ATR・資金管理まで計算しています..."):
         result=run_case_study(ticker,case_date,analysis_start,analysis_end,commission_pct/100,slippage_pct/100,int(atr_period),multipliers,float(selected_atr_multiplier),float(total_capital),float(symbol_budget),float(risk_pct),float(quote_to_capital_fx),capital_currency.strip() or "資金通貨")
     if result.get("error"): st.error(result["error"]); st.stop()
+
     st.success(f"{result['ticker']} ｜ Day0 {result['day0'].date()} ｜ 分析期間 {result['analysis_start'].date()} ～ {result['analysis_end'].date()}")
     if result["date_note"]!="入力日を使用": st.warning(result["date_note"])
+
     st.subheader("5. Day0と前後環境")
     section(1,"ケース日・BB下限位置・ATR・市場状態",result["day0_summary"],True)
     section(2,"基準日前の環境サマリー",result["pre_summary"],False)
+
     st.subheader("6. Day0～Day3 シグナル")
     section(3,"4営業日シグナル監査",result["signal_window"],True)
+
     st.subheader("7. 価格構造StopとATR型1R")
     section(4,"Stop・1R比較",result["risk_design"],True)
+
+    diag=result["risk_diagnostic"]
+    if diag is not None and not diag.empty:
+        bad=diag[diag["1R診断"].isin(["極端に狭い（価格構造1R<0.25ATR）","狭い（価格構造1R<0.50ATR）"])]
+        if not bad.empty:
+            st.warning("価格構造Stopの1RがATRに対して非常に狭いケースがあります。これは自動除外ではなく、確認用の警告です。")
+    section(5,"価格構造1R・ATR比診断",diag,True)
+
     st.subheader("8. 資金管理・購入株数")
-    section(5,"予算・許容損失から購入株数を計算",result["position_sizing"],True)
-    section(6,"購入後のStop・Target金額損益",result["money_scenarios"],True)
+    section(6,"予算・許容損失から購入株数を計算",result["position_sizing"],True)
+    section(7,"購入後のStop・Target金額損益",result["money_scenarios"],True)
+
     st.subheader("9. 実際の基準日後の結果")
-    section(7,"Stop方式別・実際の結果",result["outcomes"],True)
+    section(8,"Stop方式別・実際の結果",result["outcomes"],True)
+
     st.subheader("10. 基準日前後の価格経路")
     path=result["path"]
     if path is not None and not path.empty:
         st.line_chart(path.set_index(pd.to_datetime(path["日付"]))[["Close","BB_Lower","BB_Middle","BB_Upper"]],use_container_width=True)
-    section(8,"設定期間の価格経路",path,False)
+    section(9,"設定期間の価格経路",path,False)
+
     st.subheader("11. 1R幅の視覚比較")
     visual=result["risk_visual"]
-    if visual is not None and not visual.empty: st.bar_chart(visual.set_index("方式")[["1R_%"]],use_container_width=True)
-    section(9,"1R幅・ATR換算比較",visual,False)
-    st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。ATR倍率や許容損失率の適切さは別途検証が必要です。ギャップ、流動性、税金、為替変動などにより実際の損益は異なります。v5.3凍結AIには後付けしません。")
+    if visual is not None and not visual.empty:
+        st.bar_chart(visual.set_index("方式")[["1R_%"]],use_container_width=True)
+    section(10,"1R幅・ATR換算比較",visual,False)
+
+    st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。ATR倍率や許容損失率の適切さは別途検証が必要です。ギャップ、流動性、税金、為替変動などにより実際の損益は異なります。v5.3凍結AIには後付けしません。")
 else:
     st.caption("条件を入力して『この条件で完全分析』を押してください。")
