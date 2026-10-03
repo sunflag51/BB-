@@ -349,6 +349,39 @@ def show_pre_day0_waves(result):
                 file_name="pre_day0_swings.csv", mime="text/csv")
 
 
+def show_readable_comparison(data, value_col, axis_title, key):
+    """Full-width horizontal comparison; missing results stay missing."""
+    x = data[["方式", value_col]].copy()
+    x[value_col] = pd.to_numeric(x[value_col], errors="coerce")
+    valid = x[x[value_col].notna() & np.isfinite(x[value_col])].copy()
+    if valid.empty:
+        st.info("比較できる数値がありません。下の一覧でデータ不足などを確認してください。")
+    else:
+        labels = valid["方式"].astype(str).str.replace("｜", "<br>", regex=False)
+        values = valid[value_col]
+        lo, hi = min(0.0, float(values.min())), max(0.0, float(values.max()))
+        span = max(hi - lo, 0.1)
+        fig = go.Figure(go.Bar(x=values, y=labels, orientation="h",
+            marker_color=["#c62828" if v < 0 else "#1565c0" for v in values],
+            text=[f"{v:,.3f}" for v in values], textposition="outside",
+            textfont=dict(color="black", size=15), cliponaxis=False,
+            customdata=valid["方式"],
+            hovertemplate="%{customdata}<br>%{x:,.3f}<extra></extra>"))
+        fig.update_layout(template="plotly_white", paper_bgcolor="white", plot_bgcolor="white",
+            font=dict(color="black", size=15), height=max(380, 72 * len(valid) + 100),
+            margin=dict(l=155, r=65, t=25, b=60), showlegend=False,
+            xaxis=dict(title=axis_title, range=[lo - span * .22, hi + span * .22],
+                       gridcolor="#e5e7eb", zeroline=True, zerolinecolor="black", zerolinewidth=2),
+            yaxis=dict(autorange="reversed", automargin=True, tickfont=dict(size=14), fixedrange=True))
+        st.plotly_chart(fig, use_container_width=True, theme=None, key=key,
+            config={"displaylogo": False})
+    st.dataframe(x.rename(columns={value_col: axis_title}), use_container_width=True,
+                 hide_index=True)
+    missing = len(x) - len(valid)
+    if missing:
+        st.caption(f"数値が未確定・計算不可の{missing}組は棒を表示していません。一覧では空欄です。")
+
+
 def show_single_case_graphics(result):
     path = result.get("path", pd.DataFrame())
     visual = result.get("risk_visual", pd.DataFrame())
@@ -378,33 +411,34 @@ def show_single_case_graphics(result):
     else:
         st.info("価格チャート用のデータがありません。")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("#### グラフ2：Stop幅（1R%）比較")
-        st.caption("棒が高いほど、EntryからStopまでの幅が広いです。")
-        if visual is not None and not visual.empty:
-            st.bar_chart(visual.set_index("方式")[["1R_%"]], use_container_width=True)
-        else:
-            st.info("1R比較データがありません。")
-    with c2:
-        st.markdown("#### グラフ3：1RのATR倍率比較")
-        st.caption("1.0付近ならATR1本分、1.5ならATR×1.5、2.0ならATR×2の幅です。")
-        if visual is not None and not visual.empty and "1R_ATR倍率" in visual.columns:
-            st.bar_chart(visual.set_index("方式")[["1R_ATR倍率"]], use_container_width=True)
-        else:
-            st.info("ATR倍率比較データがありません。")
+    st.markdown("#### グラフ2：Stop幅（1R%）比較")
+    st.caption("右に長い棒ほど、EntryからStopまでの幅が広いです。単位は%です。")
+    if visual is not None and not visual.empty:
+        show_readable_comparison(visual, "1R_%", "Stop幅（%）", "stop_width_chart")
+    else:
+        st.info("シグナル未成立またはStop設計不可のため、Stop幅を比較できません。")
+
+    st.markdown("#### グラフ3：1RのATR倍率比較")
+    st.caption("1.0ならATR1本分、1.5ならATR×1.5、2.0ならATR×2の幅です。")
+    if visual is not None and not visual.empty and "1R_ATR倍率" in visual.columns:
+        show_readable_comparison(visual, "1R_ATR倍率", "1RのATR倍率（倍）", "atr_ratio_chart")
+    else:
+        st.info("ATR倍率を比較できるデータがありません。ダッシュボードの判定状況を確認してください。")
 
     st.markdown("#### グラフ4：20営業日の実際のNet R比較")
-    st.caption("プラスなら0より上、マイナスなら0より下になります。")
+    st.caption("0より右はプラス、左はマイナス。数値は売買コストを差し引いた結果です。")
     if outcomes is not None and not outcomes.empty:
         o20 = outcomes[outcomes["評価期間"] == "20営業日"].copy()
         if not o20.empty:
             o20["方式"] = o20["シグナル"].astype(str) + "｜" + o20["Stop方式"].astype(str)
-            st.bar_chart(o20.set_index("方式")[["Net_R"]], use_container_width=True)
+            show_readable_comparison(o20, "Net_R", "Net R（R）", "net_r_chart")
+            with st.expander("未確定・計算不可を含む結果の理由"):
+                st.dataframe(o20[["方式", "結果", "決済方法", "Net_R"]],
+                             use_container_width=True, hide_index=True)
         else:
             st.info("20営業日の結果データがありません。")
     else:
-        st.info("実際の結果データがありません。")
+        st.info("シグナル未成立またはStop設計不可のため、結果を比較できません。")
 
 
 def show_ledger_graphics(ledger_df):
