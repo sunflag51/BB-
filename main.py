@@ -7,12 +7,15 @@ from case_study_core import (
     APP_VERSION, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
     case_ledger_summary, case_ledger_all_ticker_summary,
+    case_ledger_computability_summary, case_ledger_equal_ticker_summary,
+    case_ledger_paired_vs_structure, case_ledger_structure_risk_distribution,
+    case_ledger_structure_risk_cases, case_ledger_detail,
 )
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
-st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋複数銘柄・複数BB下限ケース比較台帳")
-st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。v2.2では1ケース分析を残したまま、分析済みケースを台帳へ追加して比較できます。")
+st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋蓄積ケースの比較診断を強化")
+st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。v2.3ではv2.2の全機能を残したまま、計算可能率・銘柄等重み・同一ケース差・価格構造1R分布を追加します。")
 
 if "case_ledger" not in st.session_state:
     st.session_state.case_ledger=empty_case_ledger()
@@ -23,10 +26,11 @@ if "current_settings" not in st.session_state:
 if "loaded_ledger_hash" not in st.session_state:
     st.session_state.loaded_ledger_hash=None
 
-with st.expander("v2.2 複数ケース台帳の使い方", expanded=True):
+with st.expander("v2.3 複数ケース台帳・研究診断の使い方", expanded=True):
     st.write("① 今まで通り1ケースを完全分析します。② 結果下部の『今回のケースを比較台帳に追加』を押します。③ 別の銘柄・別のDay0を分析して追加します。④ 20営業日Net Rを同じ評価基準で比較します。")
     st.write("台帳CSVをダウンロードしておけば、Streamlitを開き直した後も『台帳CSVを読み込む』から続きができます。")
-    st.warning("比較件数が少ない段階の平均Rは結論ではありません。Stop方式やATR倍率を自動採用する機能ではありません。")
+    st.write("v2.2で保存したCSVはそのまま読み込めます。v2.3では銘柄ごとのケース数が違う影響や、価格構造StopとATR Stopの同一ケース差も確認できます。")
+    st.warning("比較件数が少ない段階の平均Rは結論ではありません。Stop方式やATR倍率を自動採用する機能ではありません。0.25 / 0.50 / 1.00 ATRの区分も診断表示だけです。")
 
 st.subheader("0. 複数ケース比較台帳")
 u1,u2=st.columns([2,1])
@@ -52,7 +56,7 @@ case_count=ledger["Case_ID"].nunique() if not ledger.empty else 0
 ticker_count=ledger["銘柄"].nunique() if not ledger.empty else 0
 st.write(f"現在の比較台帳: **{case_count}ケース / {ticker_count}銘柄**")
 if not ledger.empty:
-    st.download_button("比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_2.csv",mime="text/csv",use_container_width=True)
+    st.download_button("比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_3.csv",mime="text/csv",use_container_width=True)
 
 st.divider()
 st.subheader("1. 銘柄と分析期間")
@@ -160,13 +164,21 @@ ledger=normalize_case_ledger(st.session_state.case_ledger)
 if ledger.empty:
     st.info("まだ比較台帳にケースがありません。1ケースを分析して『今回のケースを比較台帳に追加』を押してください。")
 else:
-    st.download_button("最新の比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_2.csv",mime="text/csv",use_container_width=True,key="download_bottom")
+    st.download_button("最新の比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_3.csv",mime="text/csv",use_container_width=True,key="download_bottom")
     section(11,"蓄積ケース一覧",case_ledger_case_list(ledger),True)
     section(12,"20営業日・銘柄別Stop比較",case_ledger_summary(ledger,"20営業日"),True)
     section(13,"20営業日・全銘柄参考集計",case_ledger_all_ticker_summary(ledger,"20営業日"),False)
-    detail_cols=["Case_ID","銘柄","Day0","シグナル","Stop方式","評価期間","1R_%","1R_ATR倍率","結果","Gross_R","Net_R","MFE_R","MAE_R"]
-    detail=ledger[[c for c in detail_cols if c in ledger.columns]].sort_values(["Day0","銘柄","シグナル","Stop方式","評価期間"],ascending=[False,True,True,True,True])
-    section(14,"蓄積ケース明細",detail,False)
+    section(14,"蓄積ケース明細",case_ledger_detail(ledger),False)
+
+    st.subheader("14. v2.3 蓄積ケース研究診断")
+    st.caption("以下は売買条件の自動採用ではなく、蓄積データの偏り・Stop差・1R幅を確認する研究診断です。")
+    section(15,"20営業日・Net R計算可能率監査",case_ledger_computability_summary(ledger,"20営業日"),True)
+    section(16,"20営業日・銘柄等重み参考集計",case_ledger_equal_ticker_summary(ledger,"20営業日"),True)
+    section(17,"20営業日・価格構造Stopとの差（同一ケース）",case_ledger_paired_vs_structure(ledger,"20営業日"),True)
+    section(18,"価格構造1R・ATR倍率分布",case_ledger_structure_risk_distribution(ledger),True)
+    section(19,"価格構造1R・ATR比ケース明細",case_ledger_structure_risk_cases(ledger),False)
+
+    st.info("【v2.3の読み方】16番は各銘柄を同じ1票で平均します。17番は同じCase_ID・同じシグナル内だけでATR方式と価格構造を比較します。18・19番のATR比区分は診断であり、除外条件ではありません。")
     st.warning("【未採用】蓄積結果で平均Rが高いStop方式を、そのまま採用しません。ケース数、銘柄差、時期差、未決着、同日順序不明を確認し、必要なら別の時系列検証へ進みます。")
 
 st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。v5.3凍結AIには後付けしません。")

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.2.0"
+APP_VERSION="2.3.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -181,8 +181,11 @@ def run_case_study(ticker,requested_date,analysis_start,analysis_end,commission=
 
 
 # ============================================================
-# v2.2 複数ケース比較台帳
+# v2.3 複数ケース比較台帳・研究診断
 # ============================================================
+# v2.2までの台帳列をそのまま維持するため、v2.2 CSVをそのまま読めます。
+# v2.3は売買ルールを変更せず、蓄積済みケースの比較診断だけを追加します。
+
 LEDGER_COLUMNS = [
     "Case_ID","銘柄","Day0","分析開始日","分析終了日","シグナル","シグナル日","Entry日",
     "Stop方式","評価期間","Entry","Stop","1R","1R_%","1R_ATR倍率","結果","結果日","決済方法",
@@ -190,8 +193,17 @@ LEDGER_COLUMNS = [
     "Day0_20日騰落率_%","Day0_MA50乖離_%","手数料率_片道_%","Slippage率_片道_%"
 ]
 
+EVALUATION_ORDER = {
+    "5営業日": 0,
+    "10営業日": 1,
+    "20営業日": 2,
+    "設定終了日まで": 3,
+}
+
+
 def empty_case_ledger():
     return pd.DataFrame(columns=LEDGER_COLUMNS)
+
 
 def build_case_ledger_rows(result, commission=.001, slippage=.001):
     """1ケースの結果を、後から複数ケースで比較できる縦長台帳へ変換する。"""
@@ -227,35 +239,58 @@ def build_case_ledger_rows(result, commission=.001, slippage=.001):
         })
     return pd.DataFrame(rows).reindex(columns=LEDGER_COLUMNS)
 
+
 def normalize_case_ledger(df):
     if df is None or df.empty:
         return empty_case_ledger()
     x=df.copy()
     for c in LEDGER_COLUMNS:
-        if c not in x.columns: x[c]=np.nan
+        if c not in x.columns:
+            x[c]=np.nan
     x=x[LEDGER_COLUMNS]
     key=["Case_ID","シグナル","Stop方式","評価期間"]
     x=x.drop_duplicates(subset=key,keep="last").reset_index(drop=True)
     return x
 
+
 def merge_case_ledgers(old,new):
-    if old is None or old.empty: return normalize_case_ledger(new)
-    if new is None or new.empty: return normalize_case_ledger(old)
-    return normalize_case_ledger(pd.concat([old,new],ignore_index=True))
+    """同じCase_IDを再追加した場合は、そのケース全体を新しい結果で置き換える。"""
+    old_n=normalize_case_ledger(old)
+    new_n=normalize_case_ledger(new)
+    if old_n.empty:
+        return new_n
+    if new_n.empty:
+        return old_n
+    replace_ids=set(new_n["Case_ID"].dropna().astype(str))
+    if replace_ids:
+        old_n=old_n[~old_n["Case_ID"].astype(str).isin(replace_ids)].copy()
+    return normalize_case_ledger(pd.concat([old_n,new_n],ignore_index=True))
+
 
 def case_ledger_case_list(ledger):
     x=normalize_case_ledger(ledger)
-    if x.empty:return pd.DataFrame()
+    if x.empty:
+        return pd.DataFrame()
     cols=["Case_ID","銘柄","Day0","分析開始日","分析終了日"]
-    out=x[cols].drop_duplicates().sort_values(["Day0","銘柄"],ascending=[False,True]).reset_index(drop=True)
-    return out
+    return (
+        x[cols].drop_duplicates()
+        .sort_values(["Day0","銘柄"],ascending=[False,True])
+        .reset_index(drop=True)
+    )
+
+
+def _evaluation_slice(ledger,evaluation="20営業日"):
+    x=normalize_case_ledger(ledger)
+    if x.empty:
+        return pd.DataFrame()
+    return x[x["評価期間"].astype(str).eq(str(evaluation))].copy()
+
 
 def case_ledger_summary(ledger, evaluation="20営業日"):
     """同じ評価期間だけを使い、銘柄×シグナル×Stop方式を比較する。未決着は件数に残しNetR統計から除外。"""
-    x=normalize_case_ledger(ledger)
-    if x.empty:return pd.DataFrame()
-    x=x[x["評価期間"].astype(str).eq(str(evaluation))].copy()
-    if x.empty:return pd.DataFrame()
+    x=_evaluation_slice(ledger,evaluation)
+    if x.empty:
+        return pd.DataFrame()
     x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
     rows=[]
     for keys,g in x.groupby(["銘柄","シグナル","Stop方式"],dropna=False):
@@ -272,16 +307,211 @@ def case_ledger_summary(ledger, evaluation="20営業日"):
         })
     return pd.DataFrame(rows).sort_values(["銘柄","シグナル","Stop方式"]).reset_index(drop=True)
 
+
 def case_ledger_all_ticker_summary(ledger, evaluation="20営業日"):
-    x=normalize_case_ledger(ledger)
-    if x.empty:return pd.DataFrame()
-    x=x[x["評価期間"].astype(str).eq(str(evaluation))].copy()
-    if x.empty:return pd.DataFrame()
+    """ケースをそのままプールした全銘柄参考集計。銘柄ごとのケース数が重みになる。"""
+    x=_evaluation_slice(ledger,evaluation)
+    if x.empty:
+        return pd.DataFrame()
     x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
     rows=[]
     for keys,g in x.groupby(["シグナル","Stop方式"],dropna=False):
         v=g["Net_R_num"].dropna()
-        rows.append({"シグナル":keys[0],"Stop方式":keys[1],"銘柄数":g["銘柄"].nunique(),"ケース数":g["Case_ID"].nunique(),
-                     "NetR計算可能":len(v),"Net平均R":v.mean() if len(v) else np.nan,"Net中央値R":v.median() if len(v) else np.nan,
-                     "Net合計R":v.sum() if len(v) else np.nan})
+        rows.append({
+            "シグナル":keys[0],"Stop方式":keys[1],"銘柄数":g["銘柄"].nunique(),"ケース数":g["Case_ID"].nunique(),
+            "NetR計算可能":len(v),"Net平均R":v.mean() if len(v) else np.nan,"Net中央値R":v.median() if len(v) else np.nan,
+            "Net合計R":v.sum() if len(v) else np.nan,
+        })
     return pd.DataFrame(rows).sort_values(["シグナル","Stop方式"]).reset_index(drop=True)
+
+
+def case_ledger_computability_summary(ledger, evaluation="20営業日"):
+    """Net Rが確定している割合を銘柄×シグナル×Stop方式で監査する。"""
+    full=normalize_case_ledger(ledger)
+    x=_evaluation_slice(full,evaluation)
+    if x.empty:
+        return pd.DataFrame()
+    registered=full.groupby("銘柄")["Case_ID"].nunique().to_dict()
+    x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
+    rows=[]
+    for keys,g in x.groupby(["銘柄","シグナル","Stop方式"],dropna=False):
+        cases=int(g["Case_ID"].nunique())
+        computable=int(g["Net_R_num"].notna().sum())
+        result=g["結果"].astype(str)
+        rows.append({
+            "銘柄":keys[0],"シグナル":keys[1],"Stop方式":keys[2],
+            "台帳登録ケース数_銘柄":int(registered.get(keys[0],0)),
+            "このシグナル・方式のケース数":cases,
+            "NetR計算可能":computable,
+            "NetR計算可能率_%":computable/cases*100.0 if cases else np.nan,
+            "データ不足":int(result.eq("将来データ不足・未決着").sum()),
+            "同日順序不明":int(result.eq("同日両方到達・順序不明").sum()),
+        })
+    return pd.DataFrame(rows).sort_values(["銘柄","シグナル","Stop方式"]).reset_index(drop=True)
+
+
+def case_ledger_equal_ticker_summary(ledger, evaluation="20営業日"):
+    """各銘柄内の平均Net Rを先に計算し、その銘柄平均を同じ1票ずつで平均する。"""
+    x=_evaluation_slice(ledger,evaluation)
+    if x.empty:
+        return pd.DataFrame()
+    x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
+    valid=x[x["Net_R_num"].notna()].copy()
+    if valid.empty:
+        return pd.DataFrame()
+    ticker_means=(
+        valid.groupby(["銘柄","シグナル","Stop方式"],dropna=False)
+        .agg(銘柄内Net平均R=("Net_R_num","mean"),銘柄内計算可能ケース数=("Case_ID","nunique"))
+        .reset_index()
+    )
+    pooled=(
+        valid.groupby(["シグナル","Stop方式"],dropna=False)
+        .agg(単純プール平均R=("Net_R_num","mean"),NetR計算可能ケース数=("Net_R_num","size"))
+        .reset_index()
+    )
+    rows=[]
+    for keys,g in ticker_means.groupby(["シグナル","Stop方式"],dropna=False):
+        vals=g["銘柄内Net平均R"].dropna()
+        rows.append({
+            "シグナル":keys[0],"Stop方式":keys[1],
+            "NetR計算可能銘柄数":int(g["銘柄"].nunique()),
+            "NetR計算可能ケース数":int(g["銘柄内計算可能ケース数"].sum()),
+            "銘柄平均R_等重み平均":vals.mean() if len(vals) else np.nan,
+            "銘柄平均R_中央値":vals.median() if len(vals) else np.nan,
+            "銘柄平均R_最小":vals.min() if len(vals) else np.nan,
+            "銘柄平均R_最大":vals.max() if len(vals) else np.nan,
+        })
+    out=pd.DataFrame(rows)
+    out=out.merge(pooled,on=["シグナル","Stop方式"],how="left",suffixes=("","_pool"))
+    out["等重み平均-単純プール平均R"]=out["銘柄平均R_等重み平均"]-out["単純プール平均R"]
+    cols=[
+        "シグナル","Stop方式","NetR計算可能銘柄数","NetR計算可能ケース数",
+        "銘柄平均R_等重み平均","銘柄平均R_中央値","銘柄平均R_最小","銘柄平均R_最大",
+        "単純プール平均R","等重み平均-単純プール平均R",
+    ]
+    return out[cols].sort_values(["シグナル","Stop方式"]).reset_index(drop=True)
+
+
+def case_ledger_paired_vs_structure(ledger, evaluation="20営業日"):
+    """同一Case_ID・同一シグナルの価格構造StopとATR Stopを直接ペア比較する。"""
+    x=_evaluation_slice(ledger,evaluation)
+    if x.empty:
+        return pd.DataFrame()
+    keys=["Case_ID","銘柄","Day0","シグナル"]
+    struct=x[x["Stop方式"].astype(str).eq("価格構造")][keys+["結果","Net_R"]].copy()
+    if struct.empty:
+        return pd.DataFrame()
+    struct=struct.rename(columns={"結果":"価格構造結果","Net_R":"価格構造NetR"})
+    atr_methods=sorted(m for m in x["Stop方式"].dropna().astype(str).unique() if m.startswith("ATR×"))
+    rows=[]
+    for method in atr_methods:
+        a=x[x["Stop方式"].astype(str).eq(method)][keys+["結果","Net_R"]].copy()
+        a=a.rename(columns={"結果":"ATR結果","Net_R":"ATRNetR"})
+        p=struct.merge(a,on=keys,how="inner")
+        if p.empty:
+            continue
+        p["価格構造NetR_num"]=pd.to_numeric(p["価格構造NetR"],errors="coerce")
+        p["ATRNetR_num"]=pd.to_numeric(p["ATRNetR"],errors="coerce")
+        p["差"]=p["ATRNetR_num"]-p["価格構造NetR_num"]
+        for (ticker,sig),g in p.groupby(["銘柄","シグナル"],dropna=False):
+            v=g["差"].dropna()
+            rows.append({
+                "銘柄":ticker,"シグナル":sig,"比較Stop":method,
+                "共通ケース数":int(g["Case_ID"].nunique()),
+                "両方NetR計算可能":int(v.notna().sum()),
+                "ATR-価格構造_平均NetR差":v.mean() if len(v) else np.nan,
+                "ATR-価格構造_中央値R差":v.median() if len(v) else np.nan,
+                "ATRのNetRが高い件数":int((v>0).sum()),
+                "価格構造のNetRが高い件数":int((v<0).sum()),
+                "同値件数":int((v.abs()<=1e-12).sum()),
+            })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(["銘柄","シグナル","比較Stop"]).reset_index(drop=True)
+
+
+def _ratio_bucket(v):
+    if pd.isna(v):
+        return "ATR比較不可"
+    v=float(v)
+    if v<0.25:
+        return "<0.25ATR"
+    if v<0.50:
+        return "0.25～<0.50ATR"
+    if v<1.00:
+        return "0.50～<1.00ATR"
+    return ">=1.00ATR"
+
+
+def _unique_structure_rows(ledger):
+    x=normalize_case_ledger(ledger)
+    if x.empty:
+        return pd.DataFrame()
+    x=x[x["Stop方式"].astype(str).eq("価格構造")].copy()
+    if x.empty:
+        return pd.DataFrame()
+    x=x.drop_duplicates(subset=["Case_ID","銘柄","Day0","シグナル","Stop方式"],keep="last")
+    x["1R_%_num"]=pd.to_numeric(x["1R_%"],errors="coerce")
+    x["1R_ATR倍率_num"]=pd.to_numeric(x["1R_ATR倍率"],errors="coerce")
+    return x
+
+
+def case_ledger_structure_risk_distribution(ledger):
+    """価格構造Stopの1R幅とATR換算の分布を、銘柄×シグナルで要約する。"""
+    x=_unique_structure_rows(ledger)
+    if x.empty:
+        return pd.DataFrame()
+    rows=[]
+    for keys,g in x.groupby(["銘柄","シグナル"],dropna=False):
+        rp=g["1R_%_num"].dropna()
+        ra=g["1R_ATR倍率_num"].dropna()
+        buckets=g["1R_ATR倍率_num"].map(_ratio_bucket)
+        rows.append({
+            "銘柄":keys[0],"シグナル":keys[1],"価格構造ケース数":int(g["Case_ID"].nunique()),
+            "1R_%計算可能":int(rp.notna().sum()),
+            "1R_%最小":rp.min() if len(rp) else np.nan,
+            "1R_%第1四分位":rp.quantile(.25) if len(rp) else np.nan,
+            "1R_%中央値":rp.median() if len(rp) else np.nan,
+            "1R_%第3四分位":rp.quantile(.75) if len(rp) else np.nan,
+            "1R_%最大":rp.max() if len(rp) else np.nan,
+            "ATR倍率計算可能":int(ra.notna().sum()),
+            "1R_ATR倍率最小":ra.min() if len(ra) else np.nan,
+            "1R_ATR倍率第1四分位":ra.quantile(.25) if len(ra) else np.nan,
+            "1R_ATR倍率中央値":ra.median() if len(ra) else np.nan,
+            "1R_ATR倍率第3四分位":ra.quantile(.75) if len(ra) else np.nan,
+            "1R_ATR倍率最大":ra.max() if len(ra) else np.nan,
+            "<0.25ATR件数":int((buckets=="<0.25ATR").sum()),
+            "0.25～<0.50ATR件数":int((buckets=="0.25～<0.50ATR").sum()),
+            "0.50～<1.00ATR件数":int((buckets=="0.50～<1.00ATR").sum()),
+            ">=1.00ATR件数":int((buckets==">=1.00ATR").sum()),
+            "ATR比較不可件数":int((buckets=="ATR比較不可").sum()),
+        })
+    return pd.DataFrame(rows).sort_values(["銘柄","シグナル"]).reset_index(drop=True)
+
+
+def case_ledger_structure_risk_cases(ledger):
+    """価格構造1Rの狭い/広いケースを個別確認するための診断明細。閾値は採用条件ではない。"""
+    x=_unique_structure_rows(ledger)
+    if x.empty:
+        return pd.DataFrame()
+    x["ATR比診断"]=x["1R_ATR倍率_num"].map(_ratio_bucket)
+    cols=[
+        "Case_ID","銘柄","Day0","シグナル","1R_%","1R_ATR倍率","ATR比診断",
+        "Day0_ATR_%","Day0_20日騰落率_%","Day0_MA50乖離_%",
+    ]
+    out=x[[c for c in cols if c in x.columns]].copy()
+    out["_ratio_sort"]=pd.to_numeric(out.get("1R_ATR倍率"),errors="coerce")
+    out=out.sort_values(["_ratio_sort","Day0"],ascending=[True,False],na_position="last").drop(columns=["_ratio_sort"])
+    return out.reset_index(drop=True)
+
+
+def case_ledger_detail(ledger):
+    """v2.2の明細を維持しつつ、評価期間を5→10→20→設定終了日の順に見やすく並べる。"""
+    x=normalize_case_ledger(ledger)
+    if x.empty:
+        return pd.DataFrame()
+    detail_cols=["Case_ID","銘柄","Day0","シグナル","Stop方式","評価期間","1R_%","1R_ATR倍率","結果","Gross_R","Net_R","MFE_R","MAE_R"]
+    out=x[[c for c in detail_cols if c in x.columns]].copy()
+    out["_評価順"]=out["評価期間"].map(EVALUATION_ORDER).fillna(99)
+    out=out.sort_values(["Day0","銘柄","シグナル","Stop方式","_評価順"],ascending=[False,True,True,True,True])
+    return out.drop(columns=["_評価順"]).reset_index(drop=True)
