@@ -200,10 +200,22 @@ def show_beginner_cards(result, selected_multiplier, currency):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("分析対象", str(result["ticker"]))
     col2.metric("Day0", str(result["day0"].date()))
-    col3.metric("20営業日の比較本数", f"{len(o20)}")
+    col3.metric("20営業日の比較組み合わせ数", f"{len(o20)} 組",
+        help="シグナル × Stop方式の組み合わせ数です。取引回数やローソク足の本数ではありません。")
     best_all = o20["Net_R"].max() if not o20.empty else np.nan
     col4.metric("20営業日の最良Net R", fmt_num(best_all, 2, " R"))
 
+    if not o20.empty:
+        signal_count = o20["シグナル"].nunique()
+        method_count = o20["Stop方式"].nunique()
+        st.caption(f"比較対象：シグナル{signal_count}種類・Stop方式{method_count}種類、合計{len(o20)}組。取引回数ではありません。")
+        with st.expander("比較している組み合わせを見る"):
+            st.dataframe(o20[["シグナル", "Stop方式"]], use_container_width=True, hide_index=True)
+
+    usd_jpy = st.number_input("想定損失の円・ドル併記用レート（1 USD = 何 JPY）",
+        min_value=0.0, value=0.0, step=0.1, format="%.4f", key="loss_display_usd_jpy",
+        help="使用したい為替レートを入力してください。0は未入力です。株数やStopの計算には使わず、表示だけに使用します。")
+    st.caption("円・ドル併記は上の入力レートで換算します。自動取得の為替レートではありません。")
     if summary.empty:
         st.info("初心者向けサマリーを作れるデータがありません。")
         return
@@ -211,7 +223,15 @@ def show_beginner_cards(result, selected_multiplier, currency):
     st.markdown("#### まず確認する結論（シグナル別）")
     for _, row in summary.iterrows():
         signal = row["シグナル"]
-        stop_loss = fmt_num(row.get(f"Stop時想定損失_{currency}"), 0, f" {currency}")
+        loss_value = row.get(f"Stop時想定損失_{currency}")
+        stop_loss = fmt_num(loss_value, 0, f" {currency}")
+        if pd.notna(loss_value) and usd_jpy > 0:
+            if str(currency).strip().upper() == "JPY":
+                stop_loss += " ／ " + fmt_num(float(loss_value) / usd_jpy, 2, " USD")
+            elif str(currency).strip().upper() == "USD":
+                stop_loss += " ／ " + fmt_num(float(loss_value) * usd_jpy, 0, " JPY")
+        elif str(currency).strip().upper() in ("JPY", "USD") and pd.notna(loss_value):
+            stop_loss += "（円・ドル併記には上の換算レートを入力）"
         qty = "—" if pd.isna(row.get("採用購入株数")) else f"{int(row.get('採用購入株数'))} 株"
         best_stop = row.get("20日で最良のStop方式", "—")
         best_r = fmt_num(row.get("20日で最良のNet_R"), 2, " R")
