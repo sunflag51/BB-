@@ -465,54 +465,72 @@ def show_ledger_graphics(ledger_df):
     avg_r = all20["Net平均R"].mean() if not all20.empty and "Net平均R" in all20.columns else np.nan
     m4.metric("全体の平均Net R（参考）", fmt_num(avg_r, 2, " R"))
 
-    g1, g2 = st.columns(2)
-    with g1:
-        st.markdown("#### グラフ5：銘柄ごとの蓄積ケース数")
-        if case_list is not None and not case_list.empty:
-            counts = case_list.groupby("銘柄").size().to_frame("ケース数")
-            st.bar_chart(counts, use_container_width=True)
-        else:
-            st.info("蓄積ケース一覧がありません。")
-    with g2:
-        st.markdown("#### グラフ6：20営業日 全銘柄参考集計（Net平均R）")
-        if all20 is not None and not all20.empty:
-            all20c = all20.copy()
-            all20c["方式"] = all20c["シグナル"].astype(str) + "｜" + all20c["Stop方式"].astype(str)
-            st.bar_chart(all20c.set_index("方式")[["Net平均R"]], use_container_width=True)
-        else:
-            st.info("全銘柄参考集計がありません。")
+    st.markdown("#### グラフ5：銘柄ごとの蓄積ケース数")
+    if case_list is not None and not case_list.empty:
+        counts = case_list.groupby("銘柄").size().reset_index(name="ケース数")
+        counts["方式"] = counts["銘柄"]
+        show_readable_comparison(counts, "ケース数", "ケース数（件）", "ledger_count_chart")
+    else:
+        st.info("蓄積ケース一覧がありません。")
 
-    g3, g4 = st.columns(2)
-    with g3:
-        st.markdown("#### グラフ7：銘柄別 20営業日 Net平均R")
-        if summary20 is not None and not summary20.empty:
-            s = summary20.copy()
-            s["方式"] = s["銘柄"].astype(str) + "｜" + s["シグナル"].astype(str) + "｜" + s["Stop方式"].astype(str)
-            st.bar_chart(s.set_index("方式")[["Net平均R"]], use_container_width=True)
-        else:
-            st.info("銘柄別比較データがありません。")
-    with g4:
-        st.markdown("#### グラフ8：Net R計算可能率（20営業日）")
-        if comp20 is not None and not comp20.empty:
-            c = comp20.copy()
-            c["方式"] = c["銘柄"].astype(str) + "｜" + c["シグナル"].astype(str) + "｜" + c["Stop方式"].astype(str)
-            st.bar_chart(c.set_index("方式")[["NetR計算可能率_%"]], use_container_width=True)
-        else:
-            st.info("計算可能率データがありません。")
+    st.markdown("#### グラフ6：20営業日 全銘柄参考集計（Net平均R）")
+    if all20 is not None and not all20.empty:
+        x = all20.copy()
+        x["方式"] = x["シグナル"].astype(str) + "｜" + x["Stop方式"].astype(str)
+        show_readable_comparison(x, "Net平均R", "Net平均R（R）", "ledger_all_chart")
+    else:
+        st.info("全銘柄参考集計がありません。")
+
+    st.markdown("#### グラフ7：銘柄別 20営業日 Net平均R")
+    if summary20 is not None and not summary20.empty:
+        x = summary20.copy()
+        x["方式"] = x["銘柄"].astype(str) + "｜" + x["シグナル"].astype(str) + "｜" + x["Stop方式"].astype(str)
+        show_readable_comparison(x, "Net平均R", "Net平均R（R）", "ledger_ticker_chart")
+    else:
+        st.info("銘柄別比較データがありません。")
+
+    st.markdown("#### グラフ8：Net R計算可能率（20営業日）")
+    if comp20 is not None and not comp20.empty:
+        x = comp20.copy()
+        x["方式"] = x["銘柄"].astype(str) + "｜" + x["シグナル"].astype(str) + "｜" + x["Stop方式"].astype(str)
+        show_readable_comparison(x, "NetR計算可能率_%", "Net R計算可能率（%）", "ledger_computable_chart")
+    else:
+        st.info("計算可能率データがありません。")
 
     st.markdown("#### グラフ9：価格構造1RのATR比帯の分布")
+    st.caption("銘柄・シグナルごとに、各ATR比帯の件数を比較します。")
     if risk_dist is not None and not risk_dist.empty:
-        cols = [
-            "<0.25ATR件数",
-            "0.25～<0.50ATR件数",
-            "0.50～<1.00ATR件数",
-            ">=1.00ATR件数",
-        ]
-        existing = [c for c in cols if c in risk_dist.columns]
+        bands = [("<0.25ATR件数", "0.25ATR未満", "#c62828"),
+                 ("0.25～<0.50ATR件数", "0.25～0.50ATR未満", "#e65100"),
+                 ("0.50～<1.00ATR件数", "0.50～1.00ATR未満", "#1565c0"),
+                 (">=1.00ATR件数", "1.00ATR以上", "#6a1b9a")]
+        x = risk_dist.copy()
+        x["対象"] = x["銘柄"].astype(str) + "｜" + x["シグナル"].astype(str)
+        existing = [(col, label, color) for col, label, color in bands if col in x]
         if existing:
-            rd = risk_dist.copy()
-            rd["対象"] = rd["銘柄"].astype(str) + "｜" + rd["シグナル"].astype(str)
-            st.bar_chart(rd.set_index("対象")[existing], use_container_width=True)
+            fig = go.Figure()
+            ymax = 0.0
+            for col, label, color in existing:
+                values = pd.to_numeric(x[col], errors="coerce")
+                ymax = max(ymax, float(values.max()) if values.notna().any() else 0.0)
+                fig.add_trace(go.Bar(x=values,
+                    y=x["対象"].str.replace("｜", "<br>", regex=False),
+                    orientation="h", name=label, marker_color=color,
+                    text=[f"{v:.0f}" if pd.notna(v) else "" for v in values],
+                    textposition="outside", cliponaxis=False,
+                    textfont=dict(color="black", size=14), customdata=x["対象"],
+                    hovertemplate="%{customdata}<br>%{x}件<extra>%{fullData.name}</extra>"))
+            fig.update_layout(template="plotly_white", paper_bgcolor="white", plot_bgcolor="white",
+                font=dict(color="black", size=14), barmode="group",
+                height=max(480, len(x) * 160 + 180), margin=dict(l=155, r=70, t=155, b=60),
+                legend=dict(orientation="h", x=0, y=1.02, yanchor="bottom"),
+                xaxis=dict(title="件数（件）", range=[0, max(ymax, 1) * 1.25], dtick=1 if ymax < 10 else None,
+                           gridcolor="#e5e7eb"),
+                yaxis=dict(autorange="reversed", automargin=True, fixedrange=True))
+            st.plotly_chart(fig, use_container_width=True, theme=None,
+                key="ledger_atr_distribution_chart", config={"displaylogo": False})
+            st.dataframe(x[["対象"] + [col for col, _, _ in existing]],
+                         use_container_width=True, hide_index=True)
         else:
             st.info("ATR比帯の分布列がありません。")
     else:
