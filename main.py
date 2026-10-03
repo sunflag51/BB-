@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from market_view import show_market_context
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -602,6 +603,7 @@ if result:
     st.caption("このセクションだけで、何を確認すべきかが分かるようにしています。")
     show_beginner_cards(result, selected_atr_multiplier, capital_currency)
     show_single_case_graphics(result)
+    show_market_context(result)
 
     st.divider()
     st.subheader("6. 詳細データ（従来表示）")
