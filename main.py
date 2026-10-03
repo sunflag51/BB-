@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from case_study_core import (
-    APP_VERSION, fetch_usd_jpy, confirmed_pre_day0_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
+    APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
     case_ledger_summary, case_ledger_all_ticker_summary,
     case_ledger_computability_summary, case_ledger_equal_ticker_summary,
@@ -348,22 +348,32 @@ def wave_figure(prices, swings, title, show_bb=True):
     return fig
 
 
-def show_pre_day0_waves(result):
-    st.markdown("#### 基準日前：高値・安値の波")
-    st.caption("Day0当日とそれ以降を除いたローソク足です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波です。")
+def show_full_period_waves(result):
+    st.markdown("#### 全期間：高値・安値の波（基準日前後）")
+    st.caption("分析開始日から分析終了日までのローソク足です。黒い破線が基準日Day0です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波です。")
     width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3,
         help="3なら前後3本より高い高値・低い安値を検出。大きくすると大きな波を見ます。")
     show_bb = st.checkbox("BBバンドを重ねる", value=True)
     path = result["path"].copy()
     path["日付"] = pd.to_datetime(path["日付"])
-    pre = path[path["日付"] < pd.Timestamp(result["day0"])].copy()
-    if pre.empty:
-        st.info("基準日前のデータがありません。分析開始日を早めて再分析してください。")
+    if path.empty:
+        st.info("指定期間の価格データがありません。日付を確認して再分析してください。")
         return
-    swings = confirmed_pre_day0_swings(path, result["day0"], width)
-    st.plotly_chart(wave_figure(pre, swings,
-        f"{result['ticker']}｜Day0 {result['day0'].date()} より前", show_bb),
-        use_container_width=True, theme=None, config={"scrollZoom": True, "displaylogo": False})
+    swings = confirmed_full_period_swings(path, width)
+    fig = wave_figure(path, swings,
+        f"{result['ticker']}｜全期間の波・Day0 {result['day0'].date()}", show_bb)
+    dates = path["日付"].dt.strftime("%Y-%m-%d").tolist()
+    day0_text = pd.Timestamp(result["day0"]).strftime("%Y-%m-%d")
+    if day0_text in dates:
+        pos = dates.index(day0_text)
+        fig.add_shape(type="line", xref="x", yref="paper", x0=pos, x1=pos,
+            y0=0, y1=1, line=dict(color="black", width=2, dash="dash"))
+        fig.add_annotation(x=pos, y=1, xref="x", yref="paper",
+            text=f"Day0 {day0_text}", showarrow=False, yshift=15,
+            font=dict(color="black"), bgcolor="white")
+    st.plotly_chart(fig, use_container_width=True, theme=None,
+        config={"scrollZoom": True, "displaylogo": False})
+    st.caption("全期間の事後確認用です。基準日前の転換点でも、確定に基準日以降の足を使う場合があります。確定日は一覧で確認できます。")
     st.caption(f"左右{width}本で確認できた転換点のみ表示します。末尾{width}本は未確定です。"
                "同種の転換点が続く場合はより極端な点を採用し、同日に高値・安値の両方となる足は順序不明のため除外します。"
                "波は表示用で、Stop計算や売買条件には使用しません。")
@@ -373,7 +383,7 @@ def show_pre_day0_waves(result):
         with st.expander("高値・安値の一覧と確定日"):
             st.dataframe(swings, use_container_width=True, hide_index=True)
             st.download_button("波の一覧CSVを保存", swings.to_csv(index=False).encode("utf-8-sig"),
-                file_name="pre_day0_swings.csv", mime="text/csv")
+                file_name="full_period_swings.csv", mime="text/csv")
 
 
 def show_readable_comparison(data, value_col, axis_title, key):
@@ -414,7 +424,7 @@ def show_single_case_graphics(result):
     visual = result.get("risk_visual", pd.DataFrame())
     outcomes = result.get("outcomes", pd.DataFrame())
 
-    show_pre_day0_waves(result)
+    show_full_period_waves(result)
 
     st.markdown("#### グラフ1：基準日前後の価格チャート（事後確認用）")
     st.caption("ここでは『Day0以降に反発したか』『BB下限の近くからどう動いたか』を見ます。")

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.4.8"
+APP_VERSION="2.4.9"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -517,7 +517,7 @@ def case_ledger_detail(ledger):
     return out.drop(columns=["_評価順"]).reset_index(drop=True)
 
 
-def confirmed_pre_day0_swings(path, day0, width=3):
+def confirmed_pre_day0_swings(path, day0=None, width=3):
     """Strict local extrema; confirmation and calculation both precede Day0.
 
     Same-type consecutive pivots retain the more extreme one. Outside bars
@@ -529,7 +529,9 @@ def confirmed_pre_day0_swings(path, day0, width=3):
     width = int(width)
     x = path.copy()
     x["日付"] = pd.to_datetime(x["日付"])
-    x = x[x["日付"] < pd.Timestamp(day0)].sort_values("日付").reset_index(drop=True)
+    if day0 is not None:
+        x = x[x["日付"] < pd.Timestamp(day0)]
+    x = x.sort_values("日付").reset_index(drop=True)
     pivots = []
     for i in range(width, len(x) - width):
         r = x.iloc[i]
@@ -574,3 +576,8 @@ def fetch_usd_jpy():
         return {"error": None, "rate": float(values.iloc[-1]), "asof": asof}
     except Exception:
         return {"error": "為替の取得に失敗しました。再取得または手入力をお試しください。"}
+
+
+def confirmed_full_period_swings(path, width=3):
+    """Retrospective pivots confirmed within the selected analysis period."""
+    return confirmed_pre_day0_swings(path, day0=None, width=width)
