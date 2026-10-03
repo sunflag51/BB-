@@ -1,18 +1,60 @@
 from datetime import date, timedelta
+from io import StringIO
+import hashlib
 import pandas as pd
 import streamlit as st
-from case_study_core import APP_VERSION, run_case_study
+from case_study_core import (
+    APP_VERSION, run_case_study, empty_case_ledger, build_case_ledger_rows,
+    merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
+    case_ledger_summary, case_ledger_all_ticker_summary,
+)
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
-st.caption(f"Version {APP_VERSION} ｜ 前後期間＋ATR型1R＋資金管理＋購入株数＋金額損益＋価格構造1R診断")
-st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。ATRはシグナル確定時点までのデータだけで計算します。")
+st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋複数銘柄・複数BB下限ケース比較台帳")
+st.info("v5.3前向き検証とは完全に別のケーススタディ用です。AI売買判定は行いません。v2.2では1ケース分析を残したまま、分析済みケースを台帳へ追加して比較できます。")
 
-with st.expander("今回の完全版でできること", expanded=False):
-    st.write("分析開始日・BB基準日・分析終了日を自由入力し、価格構造StopとATR型Stopを比較します。総資金・1銘柄予算・許容損失から購入株数を計算し、Stop/+1R/+1.5R/+2Rの金額損益と実際の値動きを確認します。")
-    st.write("v2.1では、価格構造Stopの1RがATRに対して極端に狭いケースを見落とさないため、1R÷ATRの診断表示を追加しました。")
-    st.warning("診断は警告表示だけです。価格構造Stopを自動的にATR Stopへ変更したり、狭い1Rを自動除外したりはしません。")
+if "case_ledger" not in st.session_state:
+    st.session_state.case_ledger=empty_case_ledger()
+if "current_result" not in st.session_state:
+    st.session_state.current_result=None
+if "current_settings" not in st.session_state:
+    st.session_state.current_settings=None
+if "loaded_ledger_hash" not in st.session_state:
+    st.session_state.loaded_ledger_hash=None
 
+with st.expander("v2.2 複数ケース台帳の使い方", expanded=True):
+    st.write("① 今まで通り1ケースを完全分析します。② 結果下部の『今回のケースを比較台帳に追加』を押します。③ 別の銘柄・別のDay0を分析して追加します。④ 20営業日Net Rを同じ評価基準で比較します。")
+    st.write("台帳CSVをダウンロードしておけば、Streamlitを開き直した後も『台帳CSVを読み込む』から続きができます。")
+    st.warning("比較件数が少ない段階の平均Rは結論ではありません。Stop方式やATR倍率を自動採用する機能ではありません。")
+
+st.subheader("0. 複数ケース比較台帳")
+u1,u2=st.columns([2,1])
+with u1:
+    uploaded=st.file_uploader("以前保存したケース台帳CSVを読み込む（任意）",type=["csv"])
+with u2:
+    if st.button("台帳を空にする",use_container_width=True):
+        st.session_state.case_ledger=empty_case_ledger(); st.session_state.loaded_ledger_hash=None
+        st.success("比較台帳を空にしました。")
+if uploaded is not None:
+    raw=uploaded.getvalue(); h=hashlib.sha256(raw).hexdigest()
+    if h!=st.session_state.loaded_ledger_hash:
+        try:
+            incoming=pd.read_csv(StringIO(raw.decode("utf-8-sig")))
+            st.session_state.case_ledger=merge_case_ledgers(st.session_state.case_ledger,incoming)
+            st.session_state.loaded_ledger_hash=h
+            st.success(f"台帳CSVを読み込みました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
+        except Exception as e:
+            st.error(f"台帳CSVを読み込めませんでした: {e}")
+
+ledger=normalize_case_ledger(st.session_state.case_ledger)
+case_count=ledger["Case_ID"].nunique() if not ledger.empty else 0
+ticker_count=ledger["銘柄"].nunique() if not ledger.empty else 0
+st.write(f"現在の比較台帳: **{case_count}ケース / {ticker_count}銘柄**")
+if not ledger.empty:
+    st.download_button("比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_2.csv",mime="text/csv",use_container_width=True)
+
+st.divider()
 st.subheader("1. 銘柄と分析期間")
 c1,c2=st.columns(2)
 with c1: ticker=st.text_input("銘柄コード", value="COST", help="例: COST / AAPL / NVDA / 6857.T")
@@ -71,46 +113,60 @@ if run:
     with st.spinner("株価データを取得し、前後期間・ATR・資金管理まで計算しています..."):
         result=run_case_study(ticker,case_date,analysis_start,analysis_end,commission_pct/100,slippage_pct/100,int(atr_period),multipliers,float(selected_atr_multiplier),float(total_capital),float(symbol_budget),float(risk_pct),float(quote_to_capital_fx),capital_currency.strip() or "資金通貨")
     if result.get("error"): st.error(result["error"]); st.stop()
+    st.session_state.current_result=result
+    st.session_state.current_settings={"commission":commission_pct/100,"slippage":slippage_pct/100}
 
+result=st.session_state.current_result
+if result:
     st.success(f"{result['ticker']} ｜ Day0 {result['day0'].date()} ｜ 分析期間 {result['analysis_start'].date()} ～ {result['analysis_end'].date()}")
     if result["date_note"]!="入力日を使用": st.warning(result["date_note"])
 
     st.subheader("5. Day0と前後環境")
     section(1,"ケース日・BB下限位置・ATR・市場状態",result["day0_summary"],True)
     section(2,"基準日前の環境サマリー",result["pre_summary"],False)
-
     st.subheader("6. Day0～Day3 シグナル")
     section(3,"4営業日シグナル監査",result["signal_window"],True)
-
     st.subheader("7. 価格構造StopとATR型1R")
     section(4,"Stop・1R比較",result["risk_design"],True)
-
     diag=result["risk_diagnostic"]
     if diag is not None and not diag.empty:
         bad=diag[diag["1R診断"].isin(["極端に狭い（価格構造1R<0.25ATR）","狭い（価格構造1R<0.50ATR）"])]
-        if not bad.empty:
-            st.warning("価格構造Stopの1RがATRに対して非常に狭いケースがあります。これは自動除外ではなく、確認用の警告です。")
+        if not bad.empty: st.warning("価格構造Stopの1RがATRに対して非常に狭いケースがあります。これは自動除外ではなく、確認用の警告です。")
     section(5,"価格構造1R・ATR比診断",diag,True)
-
     st.subheader("8. 資金管理・購入株数")
     section(6,"予算・許容損失から購入株数を計算",result["position_sizing"],True)
     section(7,"購入後のStop・Target金額損益",result["money_scenarios"],True)
-
     st.subheader("9. 実際の基準日後の結果")
     section(8,"Stop方式別・実際の結果",result["outcomes"],True)
-
     st.subheader("10. 基準日前後の価格経路")
     path=result["path"]
-    if path is not None and not path.empty:
-        st.line_chart(path.set_index(pd.to_datetime(path["日付"]))[["Close","BB_Lower","BB_Middle","BB_Upper"]],use_container_width=True)
+    if path is not None and not path.empty: st.line_chart(path.set_index(pd.to_datetime(path["日付"]))[["Close","BB_Lower","BB_Middle","BB_Upper"]],use_container_width=True)
     section(9,"設定期間の価格経路",path,False)
-
     st.subheader("11. 1R幅の視覚比較")
     visual=result["risk_visual"]
-    if visual is not None and not visual.empty:
-        st.bar_chart(visual.set_index("方式")[["1R_%"]],use_container_width=True)
+    if visual is not None and not visual.empty: st.bar_chart(visual.set_index("方式")[["1R_%"]],use_container_width=True)
     section(10,"1R幅・ATR換算比較",visual,False)
 
-    st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。ATR倍率や許容損失率の適切さは別途検証が必要です。ギャップ、流動性、税金、為替変動などにより実際の損益は異なります。v5.3凍結AIには後付けしません。")
+    st.divider(); st.subheader("12. 今回のケースを比較台帳へ追加")
+    st.write("このボタンでは売買ルールを変更せず、今回の分析結果を比較用CSV台帳へ追加するだけです。同じ銘柄・同じDay0を再追加した場合は最新結果で置き換えます。")
+    if st.button("今回のケースを比較台帳に追加",type="primary",use_container_width=True):
+        settings=st.session_state.current_settings or {"commission":0.001,"slippage":0.001}
+        new_rows=build_case_ledger_rows(result,settings["commission"],settings["slippage"])
+        st.session_state.case_ledger=merge_case_ledgers(st.session_state.case_ledger,new_rows)
+        st.success(f"{result['ticker']} / Day0 {result['day0'].date()} を追加しました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
+
+st.divider(); st.subheader("13. 複数銘柄・複数BB下限ケース比較")
+ledger=normalize_case_ledger(st.session_state.case_ledger)
+if ledger.empty:
+    st.info("まだ比較台帳にケースがありません。1ケースを分析して『今回のケースを比較台帳に追加』を押してください。")
 else:
-    st.caption("条件を入力して『この条件で完全分析』を押してください。")
+    st.download_button("最新の比較台帳CSVを保存",data=ledger.to_csv(index=False,float_format="%.6f").encode("utf-8-sig"),file_name="bb_case_ledger_v2_2.csv",mime="text/csv",use_container_width=True,key="download_bottom")
+    section(11,"蓄積ケース一覧",case_ledger_case_list(ledger),True)
+    section(12,"20営業日・銘柄別Stop比較",case_ledger_summary(ledger,"20営業日"),True)
+    section(13,"20営業日・全銘柄参考集計",case_ledger_all_ticker_summary(ledger,"20営業日"),False)
+    detail_cols=["Case_ID","銘柄","Day0","シグナル","Stop方式","評価期間","1R_%","1R_ATR倍率","結果","Gross_R","Net_R","MFE_R","MAE_R"]
+    detail=ledger[[c for c in detail_cols if c in ledger.columns]].sort_values(["Day0","銘柄","シグナル","Stop方式","評価期間"],ascending=[False,True,True,True,True])
+    section(14,"蓄積ケース明細",detail,False)
+    st.warning("【未採用】蓄積結果で平均Rが高いStop方式を、そのまま採用しません。ケース数、銘柄差、時期差、未決着、同日順序不明を確認し、必要なら別の時系列検証へ進みます。")
+
+st.warning("これは過去ケースの研究・資金管理シミュレーションです。売買推奨ではありません。価格構造1R診断は警告表示であり、自動的なStop変更・除外条件ではありません。v5.3凍結AIには後付けしません。")

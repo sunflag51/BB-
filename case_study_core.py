@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.1.0"
+APP_VERSION="2.2.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -178,3 +178,110 @@ def run_case_study(ticker,requested_date,analysis_start,analysis_end,commission=
         visual["方式"]=visual.シグナル.astype(str)+"｜"+visual.Stop方式.astype(str)
         visual=visual[["方式","Entry_Open","Stop","1R","1R_%","ATR_シグナル日","1R_ATR倍率"]]
     return {"error":None,"ticker":_clean_ticker(ticker),"day0":day0,"date_note":note,"analysis_start":actual_start,"analysis_end":actual_end,"day0_summary":case_summary(df,day0,atr_period),"pre_summary":pre_summary(df,actual_start,day0,atr_period),"signal_window":find_signals(df,day0),"risk_design":design,"risk_diagnostic":risk_diagnostic(design),"position_sizing":ps,"money_scenarios":scenarios,"outcomes":build_outcomes(df,design,actual_end,commission,slippage),"path":path_table(df,actual_start,actual_end,day0),"risk_visual":visual}
+
+
+# ============================================================
+# v2.2 複数ケース比較台帳
+# ============================================================
+LEDGER_COLUMNS = [
+    "Case_ID","銘柄","Day0","分析開始日","分析終了日","シグナル","シグナル日","Entry日",
+    "Stop方式","評価期間","Entry","Stop","1R","1R_%","1R_ATR倍率","結果","結果日","決済方法",
+    "Gross_R","Net_R","MFE_R","MAE_R","期間末Close_R","Day0_Close","Day0_BB下限","Day0_ATR_%",
+    "Day0_20日騰落率_%","Day0_MA50乖離_%","手数料率_片道_%","Slippage率_片道_%"
+]
+
+def empty_case_ledger():
+    return pd.DataFrame(columns=LEDGER_COLUMNS)
+
+def build_case_ledger_rows(result, commission=.001, slippage=.001):
+    """1ケースの結果を、後から複数ケースで比較できる縦長台帳へ変換する。"""
+    if not result or result.get("error"):
+        return empty_case_ledger()
+    outcomes=result.get("outcomes",pd.DataFrame())
+    design=result.get("risk_design",pd.DataFrame())
+    if outcomes is None or outcomes.empty:
+        return empty_case_ledger()
+    ticker=str(result.get("ticker","")).upper()
+    day0=pd.Timestamp(result.get("day0")).date()
+    case_id=f"{ticker}|{day0.isoformat()}"
+    d0s=result.get("day0_summary",pd.DataFrame())
+    d0=d0s.iloc[0] if d0s is not None and not d0s.empty else pd.Series(dtype=object)
+    rows=[]
+    for _,o in outcomes.iterrows():
+        q=design[(design.get("シグナル",pd.Series(dtype=object))==o.get("シグナル")) &
+                 (design.get("Stop方式",pd.Series(dtype=object))==o.get("Stop方式"))]
+        d=q.iloc[0] if not q.empty else pd.Series(dtype=object)
+        rows.append({
+            "Case_ID":case_id,"銘柄":ticker,"Day0":day0,
+            "分析開始日":pd.Timestamp(result.get("analysis_start")).date(),
+            "分析終了日":pd.Timestamp(result.get("analysis_end")).date(),
+            "シグナル":o.get("シグナル"),"シグナル日":d.get("シグナル日"),"Entry日":d.get("Entry日"),
+            "Stop方式":o.get("Stop方式"),"評価期間":o.get("評価期間"),
+            "Entry":d.get("Entry_Open"),"Stop":d.get("Stop"),"1R":d.get("1R"),"1R_%":d.get("1R_%"),
+            "1R_ATR倍率":d.get("1R_ATR倍率"),"結果":o.get("結果"),"結果日":o.get("結果日"),
+            "決済方法":o.get("決済方法"),"Gross_R":o.get("Gross_R"),"Net_R":o.get("Net_R"),
+            "MFE_R":o.get("MFE_R"),"MAE_R":o.get("MAE_R"),"期間末Close_R":o.get("期間末Close_R"),
+            "Day0_Close":d0.get("Close"),"Day0_BB下限":d0.get("BB下限"),"Day0_ATR_%":d0.get("ATR14_%",d0.get("ATR_%",np.nan)),
+            "Day0_20日騰落率_%":d0.get("20日騰落率_%"),"Day0_MA50乖離_%":d0.get("MA50乖離_%"),
+            "手数料率_片道_%":commission*100.0,"Slippage率_片道_%":slippage*100.0,
+        })
+    return pd.DataFrame(rows).reindex(columns=LEDGER_COLUMNS)
+
+def normalize_case_ledger(df):
+    if df is None or df.empty:
+        return empty_case_ledger()
+    x=df.copy()
+    for c in LEDGER_COLUMNS:
+        if c not in x.columns: x[c]=np.nan
+    x=x[LEDGER_COLUMNS]
+    key=["Case_ID","シグナル","Stop方式","評価期間"]
+    x=x.drop_duplicates(subset=key,keep="last").reset_index(drop=True)
+    return x
+
+def merge_case_ledgers(old,new):
+    if old is None or old.empty: return normalize_case_ledger(new)
+    if new is None or new.empty: return normalize_case_ledger(old)
+    return normalize_case_ledger(pd.concat([old,new],ignore_index=True))
+
+def case_ledger_case_list(ledger):
+    x=normalize_case_ledger(ledger)
+    if x.empty:return pd.DataFrame()
+    cols=["Case_ID","銘柄","Day0","分析開始日","分析終了日"]
+    out=x[cols].drop_duplicates().sort_values(["Day0","銘柄"],ascending=[False,True]).reset_index(drop=True)
+    return out
+
+def case_ledger_summary(ledger, evaluation="20営業日"):
+    """同じ評価期間だけを使い、銘柄×シグナル×Stop方式を比較する。未決着は件数に残しNetR統計から除外。"""
+    x=normalize_case_ledger(ledger)
+    if x.empty:return pd.DataFrame()
+    x=x[x["評価期間"].astype(str).eq(str(evaluation))].copy()
+    if x.empty:return pd.DataFrame()
+    x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
+    rows=[]
+    for keys,g in x.groupby(["銘柄","シグナル","Stop方式"],dropna=False):
+        v=g["Net_R_num"].dropna()
+        result=g["結果"].astype(str)
+        rows.append({
+            "銘柄":keys[0],"シグナル":keys[1],"Stop方式":keys[2],"ケース数":g["Case_ID"].nunique(),
+            "NetR計算可能":int(v.notna().sum()),"Target先着":int(result.eq("Target先着").sum()),
+            "Stop先着":int(result.eq("Stop先着").sum()),"期間内未到達":int(result.eq("期間内未到達").sum()),
+            "同日順序不明":int(result.eq("同日両方到達・順序不明").sum()),
+            "データ不足":int(result.eq("将来データ不足・未決着").sum()),
+            "Net平均R":v.mean() if len(v) else np.nan,"Net中央値R":v.median() if len(v) else np.nan,
+            "Net合計R":v.sum() if len(v) else np.nan,"Netプラス件数":int((v>0).sum()),"Netマイナス件数":int((v<0).sum()),
+        })
+    return pd.DataFrame(rows).sort_values(["銘柄","シグナル","Stop方式"]).reset_index(drop=True)
+
+def case_ledger_all_ticker_summary(ledger, evaluation="20営業日"):
+    x=normalize_case_ledger(ledger)
+    if x.empty:return pd.DataFrame()
+    x=x[x["評価期間"].astype(str).eq(str(evaluation))].copy()
+    if x.empty:return pd.DataFrame()
+    x["Net_R_num"]=pd.to_numeric(x["Net_R"],errors="coerce")
+    rows=[]
+    for keys,g in x.groupby(["シグナル","Stop方式"],dropna=False):
+        v=g["Net_R_num"].dropna()
+        rows.append({"シグナル":keys[0],"Stop方式":keys[1],"銘柄数":g["銘柄"].nunique(),"ケース数":g["Case_ID"].nunique(),
+                     "NetR計算可能":len(v),"Net平均R":v.mean() if len(v) else np.nan,"Net中央値R":v.median() if len(v) else np.nan,
+                     "Net合計R":v.sum() if len(v) else np.nan})
+    return pd.DataFrame(rows).sort_values(["シグナル","Stop方式"]).reset_index(drop=True)
