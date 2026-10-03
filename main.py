@@ -288,13 +288,19 @@ def wave_figure(prices, swings, title, show_bb=True):
     dates = pd.to_datetime(prices["日付"]).dt.strftime("%Y-%m-%d")
     fig.add_trace(go.Candlestick(x=dates, open=prices.Open, high=prices.High,
         low=prices.Low, close=prices.Close, name="ローソク足",
-        increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
+        increasing_line_color="#ef5350", increasing_fillcolor="#ef5350",
+        decreasing_line_color="#26a69a", decreasing_fillcolor="#26a69a"))
     if show_bb:
         for col, name, color in [("BB_Lower", "BB下限", "#42a5f5"),
                                  ("BB_Middle", "BB中央", "#616161"),
                                  ("BB_Upper", "BB上限", "#42a5f5")]:
             fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
                 mode="lines", line=dict(color=color, width=1)))
+    for col, name, color in [("MA50", "50日線（SMA）", "#7b1fa2"),
+                              ("MA200", "200日線（SMA）", "#e65100")]:
+        if col in prices.columns:
+            fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
+                mode="lines", line=dict(color=color, width=2), connectgaps=False))
     if not swings.empty:
         sx = pd.to_datetime(swings["日付"]).dt.strftime("%Y-%m-%d")
         fig.add_trace(go.Scatter(x=sx, y=swings["価格"], mode="lines",
@@ -323,7 +329,7 @@ def wave_figure(prices, swings, title, show_bb=True):
 
 def show_pre_day0_waves(result):
     st.markdown("#### 基準日前：高値・安値の波")
-    st.caption("Day0当日とそれ以降を除いたローソク足です。黄色の線で高値と安値の波を結びます。")
+    st.caption("Day0当日とそれ以降を除いたローソク足です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波です。")
     width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3,
         help="3なら前後3本より高い高値・低い安値を検出。大きくすると大きな波を見ます。")
     show_bb = st.checkbox("BBバンドを重ねる", value=True)
@@ -407,7 +413,7 @@ def show_single_case_graphics(result):
                 yshift=15, font=dict(color="black"), bgcolor="white")
         st.plotly_chart(fig, use_container_width=True, theme=None,
             config={"scrollZoom": True, "displaylogo": False})
-        st.caption("黒の破線が基準日Day0です。緑は上昇足、赤は下降足。ドラッグで移動、スクロールで拡大・縮小できます。")
+        st.caption("黒の破線が基準日Day0です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線。ドラッグで移動、スクロールで拡大・縮小できます。")
     else:
         st.info("価格チャート用のデータがありません。")
 
