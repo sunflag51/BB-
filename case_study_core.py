@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.4.7"
+APP_VERSION="2.4.8"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -553,3 +553,24 @@ def confirmed_pre_day0_swings(path, day0, width=3):
         r["前回同種比"] = "初回" if old is None else ("切り上げ" if r["価格"] > old else "切り下げ" if r["価格"] < old else "同値")
         previous[r["種類"]] = r["価格"]
     return pd.DataFrame(pivots, columns=columns)
+
+
+def fetch_usd_jpy():
+    """Latest available hourly USDJPY quote, with provider timestamp."""
+    try:
+        prices = yf.Ticker("JPY=X").history(period="5d", interval="1h", timeout=10)
+        if prices is None or prices.empty or "Close" not in prices:
+            return {"error": "為替データを取得できませんでした。"}
+        values = pd.to_numeric(prices["Close"], errors="coerce")
+        values = values[values.notna() & np.isfinite(values) & values.gt(0)].sort_index()
+        if values.empty:
+            return {"error": "有効な為替レートがありません。"}
+        stamp = pd.Timestamp(values.index[-1])
+        if stamp.tzinfo is not None:
+            stamp = stamp.tz_convert("Asia/Tokyo")
+            asof = stamp.strftime("%Y-%m-%d %H:%M JST")
+        else:
+            asof = stamp.strftime("%Y-%m-%d %H:%M") + "（配信元の時刻・タイムゾーン不明）"
+        return {"error": None, "rate": float(values.iloc[-1]), "asof": asof}
+    except Exception:
+        return {"error": "為替の取得に失敗しました。再取得または手入力をお試しください。"}

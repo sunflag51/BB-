@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from case_study_core import (
-    APP_VERSION, confirmed_pre_day0_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
+    APP_VERSION, fetch_usd_jpy, confirmed_pre_day0_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
     case_ledger_summary, case_ledger_all_ticker_summary,
     case_ledger_computability_summary, case_ledger_equal_ticker_summary,
@@ -208,6 +208,29 @@ def beginner_signal_summary(result, selected_multiplier, currency):
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_usd_jpy():
+    return fetch_usd_jpy()
+
+
+def loss_conversion_rate():
+    mode = st.radio("想定損失の円・ドル換算", ["為替を自動取得", "手入力"], horizontal=True)
+    if mode == "手入力":
+        return st.number_input("1 USD = 何 JPY", min_value=0.0, value=0.0,
+            step=0.1, format="%.4f", key="loss_display_usd_jpy")
+    if st.button("為替レートを再取得", key="refresh_loss_fx"):
+        cached_usd_jpy.clear()
+    with st.spinner("ドル円レートを取得しています…"):
+        quote = cached_usd_jpy()
+    if quote.get("error"):
+        st.warning(quote["error"] + " 「手入力」に切り替えて入力できます。")
+        return 0.0
+    st.metric("自動取得したドル円", f"1 USD = {quote['rate']:.4f} JPY")
+    st.caption(f"配信元のデータ時刻：{quote['asof']}。最新の取得可能な1時間足の終値です。"
+               "休場中は直近の値を使用します。5分間キャッシュし、再取得ボタンでも更新できます。")
+    return quote["rate"]
+
+
 def show_beginner_cards(result, selected_multiplier, currency):
     summary = beginner_signal_summary(result, selected_multiplier, currency)
     outcomes = result.get("outcomes", pd.DataFrame())
@@ -228,10 +251,8 @@ def show_beginner_cards(result, selected_multiplier, currency):
         with st.expander("比較している組み合わせを見る"):
             st.dataframe(o20[["シグナル", "Stop方式"]], use_container_width=True, hide_index=True)
 
-    usd_jpy = st.number_input("想定損失の円・ドル併記用レート（1 USD = 何 JPY）",
-        min_value=0.0, value=0.0, step=0.1, format="%.4f", key="loss_display_usd_jpy",
-        help="使用したい為替レートを入力してください。0は未入力です。株数やStopの計算には使わず、表示だけに使用します。")
-    st.caption("円・ドル併記は上の入力レートで換算します。自動取得の為替レートではありません。")
+    usd_jpy = loss_conversion_rate()
+    st.caption("このレートは現在の円・ドル併記に使用します。過去の基準日の為替ではありません。株数・Stop計算の換算レートは『3. 資金管理』で指定します。")
     d0 = first_row(result.get("day0_summary", pd.DataFrame()))
     if d0 is not None:
         st.markdown("#### 基準日の価格とBB状態")
