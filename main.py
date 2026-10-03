@@ -4,8 +4,9 @@ import hashlib
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 from case_study_core import (
-    APP_VERSION, run_case_study, empty_case_ledger, build_case_ledger_rows,
+    APP_VERSION, confirmed_pre_day0_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
     case_ledger_summary, case_ledger_all_ticker_summary,
     case_ledger_computability_summary, case_ledger_equal_ticker_summary,
@@ -238,12 +239,78 @@ def show_beginner_cards(result, selected_multiplier, currency):
     st.dataframe(summary.round(4), use_container_width=True, hide_index=True)
 
 
+def wave_figure(prices, swings, title, show_bb=True):
+    fig = go.Figure()
+    dates = pd.to_datetime(prices["日付"]).dt.strftime("%Y-%m-%d")
+    fig.add_trace(go.Candlestick(x=dates, open=prices.Open, high=prices.High,
+        low=prices.Low, close=prices.Close, name="ローソク足",
+        increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
+    if show_bb:
+        for col, name, color in [("BB_Lower", "BB下限", "#42a5f5"),
+                                 ("BB_Middle", "BB中央", "#a0a7b4"),
+                                 ("BB_Upper", "BB上限", "#42a5f5")]:
+            fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
+                mode="lines", line=dict(color=color, width=1)))
+    if not swings.empty:
+        sx = pd.to_datetime(swings["日付"]).dt.strftime("%Y-%m-%d")
+        fig.add_trace(go.Scatter(x=sx, y=swings["価格"], mode="lines",
+            name="高値・安値の波", line=dict(color="#ffc107", width=2.5)))
+        for kind, color, symbol in [("高値", "#ef5350", "triangle-down"),
+                                     ("安値", "#26a69a", "triangle-up")]:
+            q = swings[swings["種類"] == kind]
+            fig.add_trace(go.Scatter(x=pd.to_datetime(q["日付"]).dt.strftime("%Y-%m-%d"),
+                y=q["価格"], mode="markers+text", name=kind,
+                marker=dict(color=color, size=11, symbol=symbol),
+                text=[f"{kind} {v:,.2f}" for v in q["価格"]],
+                textposition="top center" if kind == "高値" else "bottom center",
+                customdata=q[["確定日", "前回同種比"]].astype(str).values,
+                hovertemplate="%{x}<br>%{y:,.2f}<br>確定日: %{customdata[0]}<br>%{customdata[1]}<extra></extra>"))
+    fig.update_layout(title=title, template="plotly_dark", height=600,
+        paper_bgcolor="#131722", plot_bgcolor="#131722", dragmode="pan",
+        margin=dict(l=15, r=70, t=65, b=45),
+        legend=dict(orientation="h", y=1.08),
+        xaxis=dict(type="category", categoryorder="array", categoryarray=list(dates),
+                   rangeslider=dict(visible=False), nticks=10, showspikes=True),
+        yaxis=dict(side="right", title="価格", showspikes=True, fixedrange=False))
+    return fig
+
+
+def show_pre_day0_waves(result):
+    st.markdown("#### 基準日前：高値・安値の波")
+    st.caption("Day0当日とそれ以降を除いたローソク足です。黄色の線で高値と安値の波を結びます。")
+    width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3,
+        help="3なら前後3本より高い高値・低い安値を検出。大きくすると大きな波を見ます。")
+    show_bb = st.checkbox("BBバンドを重ねる", value=True)
+    path = result["path"].copy()
+    path["日付"] = pd.to_datetime(path["日付"])
+    pre = path[path["日付"] < pd.Timestamp(result["day0"])].copy()
+    if pre.empty:
+        st.info("基準日前のデータがありません。分析開始日を早めて再分析してください。")
+        return
+    swings = confirmed_pre_day0_swings(path, result["day0"], width)
+    st.plotly_chart(wave_figure(pre, swings,
+        f"{result['ticker']}｜Day0 {result['day0'].date()} より前", show_bb),
+        use_container_width=True, config={"scrollZoom": True, "displaylogo": False})
+    st.caption(f"左右{width}本で確認できた転換点のみ表示します。末尾{width}本は未確定です。"
+               "同種の転換点が続く場合はより極端な点を採用し、同日に高値・安値の両方となる足は順序不明のため除外します。"
+               "波は表示用で、Stop計算や売買条件には使用しません。")
+    if swings.empty:
+        st.info("この条件では確定した転換点がありません。確認日数を小さくするか分析期間を広げてください。")
+    else:
+        with st.expander("高値・安値の一覧と確定日"):
+            st.dataframe(swings, use_container_width=True, hide_index=True)
+            st.download_button("波の一覧CSVを保存", swings.to_csv(index=False).encode("utf-8-sig"),
+                file_name="pre_day0_swings.csv", mime="text/csv")
+
+
 def show_single_case_graphics(result):
     path = result.get("path", pd.DataFrame())
     visual = result.get("risk_visual", pd.DataFrame())
     outcomes = result.get("outcomes", pd.DataFrame())
 
-    st.markdown("#### グラフ1：価格チャート（Close と BBバンド）")
+    show_pre_day0_waves(result)
+
+    st.markdown("#### グラフ1：基準日前後の価格チャート（事後確認用）")
     st.caption("ここでは『Day0以降に反発したか』『BB下限の近くからどう動いたか』を見ます。")
     if path is not None and not path.empty:
         price_chart = path.set_index(pd.to_datetime(path["日付"]))[["Close", "BB_Lower", "BB_Middle", "BB_Upper"]]

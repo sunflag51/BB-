@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.4.0"
+APP_VERSION="2.4.1"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -515,3 +515,41 @@ def case_ledger_detail(ledger):
     out["_評価順"]=out["評価期間"].map(EVALUATION_ORDER).fillna(99)
     out=out.sort_values(["Day0","銘柄","シグナル","Stop方式","_評価順"],ascending=[False,True,True,True,True])
     return out.drop(columns=["_評価順"]).reset_index(drop=True)
+
+
+def confirmed_pre_day0_swings(path, day0, width=3):
+    """Strict local extrema; confirmation and calculation both precede Day0.
+
+    Same-type consecutive pivots retain the more extreme one. Outside bars
+    qualifying as both high and low are skipped because daily order is unknown.
+    """
+    columns = ["日付", "種類", "価格", "確定日", "前回同種比"]
+    if int(width) != width or width < 1:
+        raise ValueError("width must be a positive integer")
+    width = int(width)
+    x = path.copy()
+    x["日付"] = pd.to_datetime(x["日付"])
+    x = x[x["日付"] < pd.Timestamp(day0)].sort_values("日付").reset_index(drop=True)
+    pivots = []
+    for i in range(width, len(x) - width):
+        r = x.iloc[i]
+        neighbors = x.iloc[i-width:i+width+1].drop(index=i)
+        high = bool(r.High > neighbors.High.max())
+        low = bool(r.Low < neighbors.Low.min())
+        if high == low:
+            continue
+        kind, price = ("高値", float(r.High)) if high else ("安値", float(r.Low))
+        pivot = {"日付": r["日付"], "種類": kind, "価格": price,
+                 "確定日": x.iloc[i+width]["日付"]}
+        if pivots and pivots[-1]["種類"] == kind:
+            better = price > pivots[-1]["価格"] if high else price < pivots[-1]["価格"]
+            if better:
+                pivots[-1] = pivot
+        else:
+            pivots.append(pivot)
+    previous = {}
+    for r in pivots:
+        old = previous.get(r["種類"])
+        r["前回同種比"] = "初回" if old is None else ("切り上げ" if r["価格"] > old else "切り下げ" if r["価格"] < old else "同値")
+        previous[r["種類"]] = r["価格"]
+    return pd.DataFrame(pivots, columns=columns)
