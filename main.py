@@ -63,7 +63,7 @@ with st.expander("このアプリの見方（初心者向け）", expanded=True)
 st.subheader("0. 複数ケース比較台帳")
 u1, u2 = st.columns([2, 1])
 with u1:
-    uploaded = st.file_uploader("以前保存したケース台帳CSVを読み込む（任意）", type=["csv"])
+    uploaded = st.file_uploader("以前保存したケース台帳CSVを読み込む（例: bb_case_ledger_v2_4.csv）", type=["csv"], help="ファイル名の例: bb_case_ledger_v2_4.csv。比較台帳の保存ボタンでダウンロードしたCSVです。")
 with u2:
     if st.button("台帳を空にする", use_container_width=True):
         st.session_state.case_ledger = empty_case_ledger()
@@ -121,7 +121,7 @@ with st.expander("銘柄を追加・削除・保存／復元", expanded=False):
     st.download_button("保存シートCSVをダウンロード",
         st.session_state.saved_tickers.to_csv(index=False).encode("utf-8-sig"),
         file_name="saved_tickers.csv",mime="text/csv",key="download_saved_tickers")
-    uploaded_watchlist=st.file_uploader("以前保存した銘柄シートCSVを読み込む",type=["csv"],key="upload_saved_tickers")
+    uploaded_watchlist=st.file_uploader("以前保存した銘柄シートCSVを読み込む（例: saved_tickers.csv）",type=["csv"],key="upload_saved_tickers",help="ファイル名の例: saved_tickers.csv。銘柄シートのCSVダウンロードで保存したファイルです。")
     if uploaded_watchlist is not None:
         if st.button("CSVの内容で銘柄シートを復元",key="restore_saved_tickers"):
             try:
@@ -181,7 +181,7 @@ with st.expander("分析条件の保存・呼び出し", expanded=True):
         st.info("保存した分析条件はありません。銘柄と期間を入力後、下の保存欄から追加できます。")
     st.download_button("分析条件CSVをダウンロード", saved_analysis.to_csv(index=False).encode("utf-8-sig"),
         file_name="analysis_profiles.csv", mime="text/csv", key="download_analysis_profiles")
-    uploaded_analysis = st.file_uploader("以前保存した分析条件CSVを読み込む", type=["csv"], key="upload_analysis_profiles")
+    uploaded_analysis = st.file_uploader("以前保存した分析条件CSVを読み込む（例: analysis_profiles.csv）", type=["csv"], key="upload_analysis_profiles", help="ファイル名の例: analysis_profiles.csv。分析条件一覧のCSVダウンロードで保存したファイルです。")
     if uploaded_analysis is not None and st.button("CSVの内容で分析条件を復元", key="restore_analysis_profiles"):
         try:
             restored, skipped = parse_analysis_profiles_csv(uploaded_analysis)
@@ -263,7 +263,7 @@ if st.session_state.get("quote_currency_ticker") != ticker:
 
 with st.expander("資金管理の初期値を保存・読み込み",expanded=False):
     st.caption("名前を付けて複数の設定を保存できます。設定一覧はCSVでダウンロードし、次回は読み込んで復元します。")
-    uploaded_profiles=st.file_uploader("以前保存した資金設定CSV",type=["csv"],key="capital_profiles_upload")
+    uploaded_profiles=st.file_uploader("以前保存した資金設定CSV（例: capital_profiles.csv）",type=["csv"],key="capital_profiles_upload",help="ファイル名の例: capital_profiles.csv。資金設定のCSVダウンロードで保存したファイルです。")
     if uploaded_profiles is not None and st.button("CSVから資金設定を復元",key="capital_profiles_restore"):
         try:
             raw_profiles=pd.read_csv(uploaded_profiles)
