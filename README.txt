@@ -1,7 +1,7 @@
-自由銘柄・自由期間 BB下限ケース分析 v2.8.1
+自由銘柄・自由期間 BB下限ケース分析 v2.8.2
 
 ファイルをすべて同じフォルダへ配置してください。
- main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / ticker_sheet.py / requirements.txt
+ main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / ticker_sheet.py / capital_profiles.py / requirements.txt
 ローカル: pip install -r requirements.txt → streamlit run main.py
 Streamlit Cloud: 上記ファイルをリポジトリへ配置し、main.pyを指定します。
 
@@ -48,4 +48,8 @@ BB下限ルール：条件は画面で変更可能。BB20・2σ、ATR14、Stop1.
 
 結果は各CSV/相談レポートから保存できます。表示した数値は過去検証で将来損益を保証しません。仮説や取引条件を変えて再計算し、未使用期間でも検証してください。
 
-v2.8.1: 銘柄の会社名付き選択（COST コストコ、NVDA エヌビディア、GOOG、MSFT、AAPL、ISRG、任天堂7974.T、アドバンテスト6857.T）を追加。任意コード入力可。別枠の銘柄保存シートへ追加・削除でき、CSVダウンロードと復元に対応。保存シートはアプリ画面のセッションに保持されます。再起動後も保持するためCSVを保存して復元してください。
+v2.8.2: 銘柄の会社名付き選択（COST コストコ、NVDA エヌビディア、GOOG、MSFT、AAPL、ISRG、任天堂7974.T、アドバンテスト6857.T）を追加。任意コード入力可。別枠の銘柄保存シートへ追加・削除でき、CSVダウンロードと復元に対応。保存シートはアプリ画面のセッションに保持されます。再起動後も保持するためCSVを保存して復元してください。
+
+v2.8.2: Section 3 now infers quote currency as JPY for .T tickers and USD otherwise (user-overridable). USD↔JPY conversion defaults to current cached USDJPY quote; identical currencies use 1.0; manual cross-rate is available. Missing auto rates stop position sizing until resolved. Named capital profiles include total capital, single-ticker budget, risk percent, quote/funding currencies, FX mode/manual rate. Profiles can be saved, loaded, deleted, exported as CSV and restored from CSV. Profile state persists in the current app session; export and restore CSV across restarts.
+
+v2.8.2: 資金通貨JPY/USD選択。株価通貨は.TならJPY、それ以外USDを初期推定（画面で変更可）。USD→JPY、JPY→USDは現在のUSDJPYを自動取得して換算。同通貨は1。取得失敗時は分析を進めず、手入力へ切替可能。資金管理の総資金・1銘柄予算・許容損失率・通貨・為替モード・手入力レートを名前付きプロファイルとして複数保存、読み込み、削除。CSVダウンロード・復元に対応。プロファイルは画面セッション中に保持されます。別セッションや再起動後のためCSVを保存して復元してください。

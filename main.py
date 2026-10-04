@@ -9,6 +9,7 @@ from market_view import show_market_context
 from ai_view import show_ai_panel
 from strategy_lab_view import show_strategy_lab
 from ticker_sheet import PRESET_TICKERS, normalize_sheet, add_ticker, remove_tickers, options_with_saved, normalize_ticker
+from capital_profiles import normalize_profiles, profile_values, save_profile, delete_profile, PROFILE_FIELDS, conversion_rate
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -19,6 +20,16 @@ from case_study_core import (
 )
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_usd_jpy():
+    return fetch_usd_jpy()
+
+CAPITAL_DEFAULTS={"cap_total":1_000_000.0,"cap_budget":300_000.0,"cap_risk_pct":1.0,
+    "cap_currency":"JPY","quote_currency":"USD","capital_fx_mode":"自動（ドル円）","manual_quote_fx":1.0}
+for _key,_value in CAPITAL_DEFAULTS.items():st.session_state.setdefault(_key,_value)
+if "capital_profiles" not in st.session_state:st.session_state.capital_profiles=pd.DataFrame(columns=PROFILE_FIELDS)
+
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
 st.caption(f"Version {APP_VERSION} ｜ ケース分析・市場セクター・判断理由を確認するAI分析")
 st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。AIは上昇・下降の特徴を分析します。自動売買は行いません。")
@@ -155,20 +166,96 @@ with c6:
 with c7:
     selected_atr_multiplier = st.number_input("資金管理で主に使うATR倍率", 0.1, 10.0, 1.5, 0.1, format="%.1f")
 
-st.subheader("3. 資金管理")
-st.caption("米国株を円資金で見る場合は、換算レートに『1 USD = 何円』を入力してください。日本株を円で見る場合は1.0です。")
-c8, c9, c10 = st.columns(3)
-with c8:
-    total_capital = st.number_input("総資金", min_value=0.0, value=1000000.0, step=10000.0, format="%.2f")
-with c9:
-    symbol_budget = st.number_input("この1銘柄に使える予算", min_value=0.0, value=300000.0, step=10000.0, format="%.2f")
-with c10:
-    risk_pct = st.number_input("1取引の許容損失（総資金に対する%）", 0.01, 100.0, 1.0, 0.1, format="%.2f")
-c11, c12 = st.columns(2)
-with c11:
-    quote_to_capital_fx = st.number_input("株価通貨→資金通貨 換算レート", min_value=0.000001, value=1.0, step=0.1, format="%.4f")
-with c12:
-    capital_currency = st.text_input("資金通貨の表示名", value="JPY", help="例: JPY / USD")
+st.subheader("3. 資金管理・保存設定")
+st.caption("通貨は選択中の銘柄コードから初期推定します。米国株USD・円資金JPYでは最新取得可能なドル円を自動取得します。日本株JPY・円資金JPYは換算1です。")
+# When selecting another ticker, infer its quote currency; allow an explicit override.
+if st.session_state.get("quote_currency_ticker") != ticker:
+    st.session_state["quote_currency"]="JPY" if ticker.upper().endswith('.T') else "USD"
+    st.session_state["quote_currency_ticker"]=ticker
+
+with st.expander("資金管理の初期値を保存・読み込み",expanded=False):
+    st.caption("名前を付けて複数の設定を保存できます。設定一覧はCSVでダウンロードし、次回は読み込んで復元します。")
+    uploaded_profiles=st.file_uploader("以前保存した資金設定CSV",type=["csv"],key="capital_profiles_upload")
+    if uploaded_profiles is not None and st.button("CSVから資金設定を復元",key="capital_profiles_restore"):
+        try:
+            raw_profiles=pd.read_csv(uploaded_profiles)
+            if not set(PROFILE_FIELDS).issubset(raw_profiles.columns):raise ValueError("必要な資金設定の列がありません。")
+            st.session_state.capital_profiles=normalize_profiles(raw_profiles)
+            st.rerun()
+        except Exception as exc:st.error(f"CSVを読み込めませんでした。ファイル内容を確認してください。{exc}")
+    st.download_button("資金設定CSVをダウンロード",
+        normalize_profiles(st.session_state.capital_profiles).to_csv(index=False).encode("utf-8-sig"),
+        file_name="capital_profiles.csv",mime="text/csv",key="capital_profiles_download")
+    profiles=normalize_profiles(st.session_state.capital_profiles)
+    choices=["読み込む設定を選択"]+profiles["プロファイル名"].tolist()
+    if st.session_state.get("capital_profile_choice") not in choices:st.session_state["capital_profile_choice"]=choices[0]
+    chosen_profile=st.selectbox("保存した資金設定",choices,key="capital_profile_choice")
+    p1,p2=st.columns(2)
+    with p1:
+        if st.button("選んだ設定を読み込む",key="capital_profile_load"):
+            row=profiles.loc[profiles["プロファイル名"].eq(chosen_profile)]
+            if not row.empty:
+                values=profile_values(row.iloc[0])
+                widget_keys={"total_capital":"cap_total","symbol_budget":"cap_budget","risk_pct":"cap_risk_pct",
+                    "capital_currency":"cap_currency","quote_currency":"quote_currency",
+                    "capital_fx_mode":"capital_fx_mode","manual_quote_fx":"manual_quote_fx"}
+                for _source,_widget in widget_keys.items():
+                    if _source in values and pd.notna(values[_source]):st.session_state[_widget]=values[_source]
+                st.session_state["quote_currency_ticker"]=ticker
+                st.rerun()
+    with p2:
+        delete_choices=["削除する設定を選択"]+profiles["プロファイル名"].tolist()
+        if st.session_state.get("capital_profile_delete_choice") not in delete_choices:st.session_state["capital_profile_delete_choice"]=delete_choices[0]
+        delete_choice=st.selectbox("削除する保存設定",delete_choices,key="capital_profile_delete_choice")
+        if st.button("選んだ設定を削除",key="capital_profile_delete") and delete_choice!=delete_choices[0]:
+            st.session_state.capital_profiles=delete_profile(profiles,delete_choice)
+            st.rerun()
+    st.dataframe(profiles,hide_index=True,use_container_width=True)
+
+cc1,cc2,cc3=st.columns(3)
+with cc1:
+    quote_currency=st.selectbox("株価の通貨",["USD","JPY"],key="quote_currency")
+with cc2:
+    capital_currency=st.selectbox("資金通貨",["JPY","USD"],key="cap_currency")
+with cc3:
+    fx_mode=st.selectbox("通貨換算方法",["自動（ドル円）","手入力"],key="capital_fx_mode")
+quote_to_capital_fx=conversion_rate(quote_currency,capital_currency,method=fx_mode,
+    manual_rate=st.session_state.get("manual_quote_fx",1.0)) if quote_currency==capital_currency or fx_mode=="手入力" else None
+if quote_currency==capital_currency:
+    st.info(f"株価通貨と資金通貨が同じため、換算レートは1.0000 {capital_currency}/{quote_currency}です。")
+elif fx_mode=="自動（ドル円）" and {quote_currency,capital_currency}=={"USD","JPY"}:
+    if st.button("ドル円レートを再取得",key="refresh_capital_fx"):cached_usd_jpy.clear()
+    with st.spinner("ドル円レートを取得しています…"):
+        quote=cached_usd_jpy()
+    if quote.get("error"):
+        st.warning(quote["error"]+" 手入力へ切り替えるか、再取得してください。")
+    else:
+        quote_to_capital_fx=conversion_rate(quote_currency,capital_currency,usd_jpy=quote["rate"])
+        st.metric("自動取得した換算レート",f"1 {quote_currency} = {quote_to_capital_fx:.4f} {capital_currency}")
+        st.caption(f"配信元データ時刻：{quote['asof']}。最新取得可能な1時間足で、5分間キャッシュします。")
+elif quote_currency!=capital_currency and fx_mode=="手入力":
+    default_fx=float(st.session_state.get("manual_quote_fx",1.0))
+    capital_fx=st.number_input(f"株価通貨→資金通貨（1 {quote_currency} = 何 {capital_currency}）",min_value=.000001,value=default_fx,step=.1,format="%.6f",key="manual_quote_fx")
+    quote_to_capital_fx=conversion_rate(quote_currency,capital_currency,manual_rate=capital_fx,method=fx_mode)
+else:
+    st.error("この通貨の組み合わせは自動換算できません。手入力へ切り替えてください。")
+
+c8,c9,c10=st.columns(3)
+with c8:total_capital=st.number_input(f"総資金（{capital_currency}）",min_value=0.,step=10000.,format="%.2f",key="cap_total")
+with c9:symbol_budget=st.number_input(f"この1銘柄に使える予算（{capital_currency}）",min_value=0.,step=10000.,format="%.2f",key="cap_budget")
+with c10:risk_pct=st.number_input("1取引の許容損失（総資金に対する%）",.01,100.,step=.1,format="%.2f",key="cap_risk_pct")
+
+save1,save2=st.columns([1,2])
+with save1:profile_new_name=st.text_input("保存名",placeholder="例：円資金・米国株",key="capital_profile_new_name")
+with save2:
+    if st.button("現在の資金設定を保存",key="capital_profile_save"):
+        values={"total_capital":total_capital,"symbol_budget":symbol_budget,"risk_pct":risk_pct,
+            "capital_currency":capital_currency,"quote_currency":quote_currency,
+            "capital_fx_mode":fx_mode,"manual_quote_fx":st.session_state.get("manual_quote_fx",1.0)}
+        try:
+            st.session_state.capital_profiles=save_profile(st.session_state.capital_profiles,profile_new_name,values)
+            st.rerun()
+        except ValueError as exc:st.error(str(exc))
 
 st.subheader("4. 売買コスト")
 c13, c14 = st.columns(2)
@@ -265,11 +352,6 @@ def beginner_signal_summary(result, selected_multiplier, currency):
             "20日で最良のNet_R": best.get("Net_R") if best is not None else np.nan,
         })
     return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def cached_usd_jpy():
-    return fetch_usd_jpy()
 
 
 def loss_conversion_rate():
@@ -628,6 +710,9 @@ def show_ledger_graphics(ledger_df):
 
 
 if run:
+    if quote_to_capital_fx is None or quote_to_capital_fx<=0:
+        st.error("通貨換算レートがありません。自動レートを再取得するか、手入力へ切り替えてください。")
+        st.stop()
     if analysis_start > case_date:
         st.error("分析開始日はBB基準日以前にしてください。")
         st.stop()
