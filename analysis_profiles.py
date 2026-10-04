@@ -1,6 +1,7 @@
 """Helpers for saving ticker and analysis-period presets."""
 from __future__ import annotations
 
+from io import StringIO
 import pandas as pd
 
 PROFILE_FIELDS = ["保存名", "銘柄コード", "銘柄名", "基準日", "分析開始日", "分析終了日"]
@@ -57,3 +58,43 @@ def save_analysis_profile(frame, name, ticker, ticker_name, case_date, start_dat
 def delete_analysis_profile(frame, name):
     x = normalize_analysis_profiles(frame)
     return x.loc[x["保存名"] != str(name)].reset_index(drop=True)
+
+
+def parse_analysis_profiles_csv(payload):
+    """Read the exported profile sheet, handling UTF-8 BOM and validating columns."""
+    if hasattr(payload, "getvalue"):
+        payload = payload.getvalue()
+    if isinstance(payload, bytes):
+        try:
+            payload = payload.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("CSVはUTF-8形式で保存してください。") from exc
+    try:
+        raw = pd.read_csv(StringIO(str(payload)), dtype=str, keep_default_na=False)
+    except Exception as exc:
+        raise ValueError(f"CSVを読み取れません: {exc}") from exc
+    aliases = {
+        "name": "保存名", "profile": "保存名", "ticker": "銘柄コード", "symbol": "銘柄コード",
+        "company": "銘柄名", "ticker_name": "銘柄名", "day0": "基準日",
+        "start": "分析開始日", "analysis_start": "分析開始日",
+        "end": "分析終了日", "analysis_end": "分析終了日",
+    }
+    renamed = [aliases.get(str(c).strip().lstrip("\ufeff").casefold(), str(c).strip().lstrip("\ufeff")) for c in raw.columns]
+    missing = [field for field in PROFILE_FIELDS if field not in renamed]
+    if missing:
+        raise ValueError("CSVに必要な列がありません: " + "、".join(missing))
+    normalized_input = raw.copy()
+    normalized_input.columns = renamed
+    normalized = normalize_analysis_profiles(normalized_input)
+    dropped = max(0, len(raw) - len(normalized))
+    if len(raw) and normalized.empty:
+        raise ValueError("保存名、銘柄コード、基準日、分析開始日、分析終了日の値を確認してください。")
+    return normalized, dropped
+
+
+def get_analysis_profile(frame, name):
+    x = normalize_analysis_profiles(frame)
+    match = x.loc[x["保存名"] == str(name).strip()]
+    if match.empty:
+        raise KeyError(f"保存条件『{name}』が見つかりません。")
+    return match.iloc[-1].to_dict()
