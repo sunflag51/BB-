@@ -7,6 +7,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from market_view import show_market_context
 from ai_view import show_ai_panel
+from strategy_lab_view import show_strategy_lab
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -606,9 +607,10 @@ if result:
     show_single_case_graphics(result)
     show_market_context(result)
     show_ai_panel(result)
+    show_strategy_lab(result, commission_pct, slippage_pct)
 
     st.divider()
-    st.subheader("6. 詳細データ（従来表示）")
+    st.subheader("7. 詳細データ（従来表示）")
     section(1, "ケース日・BB下限位置・ATR・市場状態", result["day0_summary"], True)
     section(2, "基準日前の環境サマリー", result["pre_summary"], False)
     section(3, "4営業日シグナル監査", result["signal_window"], True)
@@ -626,7 +628,7 @@ if result:
     section(10, "1R幅・ATR換算比較", result["risk_visual"], False)
 
     st.divider()
-    st.subheader("7. 今回のケースを比較台帳へ追加")
+    st.subheader("8. 今回のケースを比較台帳へ追加")
     st.write("このボタンでは、今回の分析結果を比較用CSV台帳へ追加するだけです。同じ銘柄・同じDay0を再追加した場合は最新結果で置き換えます。")
     if st.button("今回のケースを比較台帳に追加", type="primary", use_container_width=True):
         settings = st.session_state.current_settings or {"commission": 0.001, "slippage": 0.001}
@@ -635,7 +637,7 @@ if result:
         st.success(f"{result['ticker']} / Day0 {result['day0'].date()} を追加しました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
 
 st.divider()
-st.subheader("8. 複数銘柄・複数BB下限ケース比較")
+st.subheader("9. 複数銘柄・複数BB下限ケース比較")
 ledger = normalize_case_ledger(st.session_state.case_ledger)
 if ledger.empty:
     st.info("まだ比較台帳にケースがありません。1ケースを分析して『今回のケースを比較台帳に追加』を押してください。")

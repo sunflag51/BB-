@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.6.1"
+APP_VERSION="2.8.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
