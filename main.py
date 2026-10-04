@@ -10,6 +10,7 @@ from ai_view import show_ai_panel
 from strategy_lab_view import show_strategy_lab
 from ticker_sheet import PRESET_TICKERS, normalize_sheet, add_ticker, remove_tickers, options_with_saved, normalize_ticker
 from capital_profiles import normalize_profiles, profile_values, save_profile, delete_profile, PROFILE_FIELDS, conversion_rate
+from analysis_profiles import normalize_analysis_profiles, save_analysis_profile, delete_analysis_profile, PROFILE_FIELDS as ANALYSIS_PROFILE_FIELDS
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -24,6 +25,10 @@ st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分�
 @st.cache_data(ttl=300, show_spinner=False)
 def cached_usd_jpy():
     return fetch_usd_jpy()
+
+ANALYSIS_DATE_DEFAULTS={"case_date_value":date.today()-timedelta(days=30),"analysis_start_value":date.today()-timedelta(days=120),"analysis_end_value":date.today()}
+for _key,_value in ANALYSIS_DATE_DEFAULTS.items():st.session_state.setdefault(_key,_value)
+if "analysis_profiles" not in st.session_state:st.session_state.analysis_profiles=pd.DataFrame(columns=ANALYSIS_PROFILE_FIELDS)
 
 CAPITAL_DEFAULTS={"cap_total":1_000_000.0,"cap_budget":300_000.0,"cap_risk_pct":1.0,
     "cap_currency":"JPY","quote_currency":"USD","capital_fx_mode":"自動（ドル円）","manual_quote_fx":1.0}
@@ -126,6 +131,57 @@ with st.expander("銘柄を追加・削除・保存／復元", expanded=False):
                 st.rerun()
             except Exception as exc:st.error(f"CSVを読み込めませんでした。銘柄コード・銘柄名の列を確認してください。{exc}")
 
+with st.expander("分析条件の保存・呼び出し", expanded=False):
+    st.caption("銘柄と基準日・分析開始日・分析終了日をひとまとめにして保存します。アプリ再起動後も使う場合はCSVを保存して読み込んでください。")
+    st.session_state.analysis_profiles = normalize_analysis_profiles(st.session_state.analysis_profiles)
+    saved_analysis = st.session_state.analysis_profiles
+    if not saved_analysis.empty:
+        st.dataframe(saved_analysis, hide_index=True, use_container_width=True)
+        profile_choices = saved_analysis["保存名"].tolist()
+        load_key = "analysis_profile_load_choice"
+        if st.session_state.get(load_key) not in profile_choices:
+            st.session_state[load_key] = profile_choices[0]
+        load_name = st.selectbox("呼び出す分析条件", profile_choices, key=load_key)
+        if st.button("選んだ分析条件を呼び出す", key="load_analysis_profile"):
+            row = saved_analysis.loc[saved_analysis["保存名"] == load_name].iloc[-1]
+            code = row["銘柄コード"]
+            opts = options_with_saved(st.session_state.saved_tickers)
+            matching = next((label for label, value in opts.items() if value == code), None)
+            if matching:
+                st.session_state["ticker_choice"] = matching
+            else:
+                st.session_state["ticker_choice"] = "その他（銘柄コードを入力）"
+                st.session_state["ticker_custom"] = code
+                st.session_state["ticker_custom_name"] = row["銘柄名"]
+            st.session_state["case_date_value"] = pd.Timestamp(row["基準日"]).date()
+            st.session_state["analysis_start_value"] = pd.Timestamp(row["分析開始日"]).date()
+            st.session_state["analysis_end_value"] = pd.Timestamp(row["分析終了日"]).date()
+            st.session_state.current_result = None
+            st.session_state.current_settings = None
+            st.rerun()
+        delete_key = "analysis_profile_delete_choice"
+        if st.session_state.get(delete_key) not in profile_choices:
+            st.session_state[delete_key] = profile_choices[0]
+        delete_name = st.selectbox("削除する分析条件", profile_choices, key=delete_key)
+        if st.button("選んだ分析条件を削除", key="delete_analysis_profile"):
+            st.session_state.analysis_profiles = delete_analysis_profile(saved_analysis, delete_name)
+            st.rerun()
+    else:
+        st.info("保存した分析条件はありません。銘柄と期間を入力してから、この下の保存欄で追加できます。")
+    st.download_button("分析条件CSVをダウンロード", saved_analysis.to_csv(index=False).encode("utf-8-sig"),
+        file_name="analysis_profiles.csv", mime="text/csv", key="download_analysis_profiles")
+    uploaded_analysis = st.file_uploader("以前保存した分析条件CSVを読み込む", type=["csv"], key="upload_analysis_profiles")
+    if uploaded_analysis is not None and st.button("CSVの内容で分析条件を復元", key="restore_analysis_profiles"):
+        try:
+            incoming = pd.read_csv(uploaded_analysis)
+            restored = normalize_analysis_profiles(incoming)
+            if restored.empty and not incoming.empty:
+                raise ValueError("有効な保存名・銘柄・3つの日付が見つかりません。")
+            st.session_state.analysis_profiles = restored
+            st.rerun()
+        except Exception as exc:
+            st.error(f"CSVを読み込めませんでした: {exc}")
+
 st.subheader("1. 銘柄と分析期間")
 c1, c2 = st.columns(2)
 with c1:
@@ -150,12 +206,31 @@ with c1:
         if added:st.rerun()
         else:st.info("この銘柄は登録済みです。")
 with c2:
-    case_date = st.date_input("BB下限付近の基準日（Day0）", value=date.today() - timedelta(days=30))
+    case_date = st.date_input("BB下限付近の基準日（Day0）", key="case_date_value")
 c3, c4 = st.columns(2)
 with c3:
-    analysis_start = st.date_input("基準日前の分析開始日", value=date.today() - timedelta(days=120))
+    analysis_start = st.date_input("基準日前の分析開始日", key="analysis_start_value")
 with c4:
-    analysis_end = st.date_input("分析終了日", value=date.today())
+    analysis_end = st.date_input("分析終了日", key="analysis_end_value")
+
+with st.expander("現在の銘柄・分析期間を保存", expanded=False):
+    preset_name = st.text_input("保存名", placeholder="例：NVDA 直近1年", key="analysis_profile_new_name")
+    if st.button("現在の銘柄・期間を保存", key="save_analysis_profile"):
+        if ticker_options.get(ticker_choice) == "__CUSTOM__":
+            profile_ticker_name = custom_name or ticker
+        else:
+            profile_ticker_name = PRESET_TICKERS.get(ticker, ticker)
+            for _, saved_row in st.session_state.saved_tickers.iterrows():
+                if saved_row["銘柄コード"] == ticker:
+                    profile_ticker_name = saved_row["銘柄名"]
+                    break
+        try:
+            st.session_state.analysis_profiles = save_analysis_profile(
+                st.session_state.analysis_profiles, preset_name, ticker, profile_ticker_name,
+                case_date, analysis_start, analysis_end)
+            st.success(f"「{preset_name.strip()}」を保存しました。")
+        except Exception as exc:
+            st.error(str(exc))
 
 st.subheader("2. 1R・Stopの比較条件")
 c5, c6, c7 = st.columns(3)
