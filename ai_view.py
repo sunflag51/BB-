@@ -6,6 +6,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import yfinance as yf
 from ai_analysis import analyze, explain_day, CLASSES, DEFINITIONS
+from ai_walkforward_view import show_walkforward
 from market_view import download_market_prices, calculate_market, style, SECTORS
 
 @st.cache_data(ttl=600,show_spinner=False)
@@ -184,7 +185,7 @@ def build_ai_copy_report(result, bundle, explanation, day, sector, include_marke
     actual = explanation["actual"]
     outcome = "未確定（指定期間内の将来データ不足）" if pd.isna(actual["結果"]) else (
         f"{actual['結果']} / {actual['将来騰落率_%']:+.6f}% / 確定日 {actual['結果確定日'].date()}")
-    lines = ["AI分析の確認用レポート v2.6.4",
+    lines = ["AI分析の確認用レポート v2.7.0",
         "この結果の偏り、検証成績、判定理由を初心者向けに確認してください。",
         f"銘柄: {result['ticker']}",
         f"分析期間: {result['analysis_start']} ～ {result['analysis_end']}",
@@ -339,6 +340,7 @@ def show_ai_panel(result):
     st.caption("検証データで特徴を入れ替え、正解率がどれだけ下がるかを測定。0付近は効果未確認、負は入れ替えて改善した特徴です。似た特徴同士では重要度が分散する場合があります。")
     st.dataframe(importance,hide_index=True,use_container_width=True)
     descriptive_view(bundle)
+    show_walkforward(result, bundle, signature, sector, horizon, threshold, width, atr_period, lambda: build_context(result, sector))
     with st.expander("全検証日と予測を確認・保存"):
         test=condition_test.reset_index(names="日付")
         st.dataframe(test,hide_index=True,use_container_width=True)
