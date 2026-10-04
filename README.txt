@@ -1,7 +1,7 @@
-自由銘柄・自由期間 BB下限ケース分析 v2.8.5
+自由銘柄・自由期間 BB下限ケース分析 v2.8.7
 
 ファイルをすべて同じフォルダへ配置してください。
- main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / ticker_sheet.py / capital_profiles.py / analysis_profiles.py / requirements.txt
+ main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / ticker_sheet.py / capital_profiles.py / analysis_profiles.py / requirements.txt
 ローカル: pip install -r requirements.txt → streamlit run main.py
 Streamlit Cloud: 上記ファイルをリポジトリへ配置し、main.pyを指定します。
 
@@ -39,15 +39,6 @@ v2.6.4: 検証日ごとの判断条件番号を追加。全学習条件ごとの
 v2.7.0: ai_walkforward.py と ai_walkforward_view.py を追加。ai_view.pyと同じフォルダに置いてください。AI分析実行後「時期をずらしたAI検証」欄で4通りの時系列比較を実行。学習126日（初期）/252日、検証42日（初期）/21日/63日。各期間の開始前に結果確定した直近日数のみ学習、最大3段の決定木を市場特徴・分類補正の4通りで比較。市場特徴は各学習期間の95%充足率で採否を決め、欠損は学習中央値補完。学習不足・市場不足は4通りとも期間を除外。全体成績、期間別グラフ、境界監査、全予測CSV、相談用コピーレポートを追加。上部の固定モデルの分類は変更しません。比較で選んだ方法には別の未使用期間の検証が必要です。
 
 
-v2.8.0 研究室：仮説検証の全体像
-main.py実行後、完全分析を行うと研究室が表示されます。既存ケース台帳・グラフ・市場/セクター欄・説明AI・時系列4通り比較はそのままです。
-
-BB下限ルール：条件は画面で変更可能。BB20・2σ、ATR14、Stop1.5ATR、利確2R、最大保有20営業日、1%リスク、資金50%上限が初期値です。前営業日のLowがBB下限以下、またはCloseがBB下限から設定%内で、翌営業日の始値に買います。Stopはシグナル日のATRを使用し、同じ日にStopと利確両方到達ならStopを優先。最大保有日・期間末に決済。決済日に新しいエントリーは行いません。手数料・滑りは既存の片道設定を反映。株数はリスク予算・資金上限から算出。複利再投資、税金、配当、部分約定、為替換算はモデル化しません。株数は整数株。
-
-決算仮説：実際に確認した決算日を1行ずつ入力。自動カレンダーは使わず、誤った日付の混入を避けます。各決算日の前20営業日（変更可）で、初日終値から最高値までの上昇幅と、最高値から決算直前終値までの反落幅を測ります。「利益確定売り」は説明候補であって原因を証明しません。決算後の値動きは現版では対象外。
-
-結果は各CSV/相談レポートから保存できます。表示した数値は過去検証で将来損益を保証しません。仮説や取引条件を変えて再計算し、未使用期間でも検証してください。
-
 v2.8.2: 銘柄の会社名付き選択（COST コストコ、NVDA エヌビディア、GOOG、MSFT、AAPL、ISRG、任天堂7974.T、アドバンテスト6857.T）を追加。任意コード入力可。別枠の銘柄保存シートへ追加・削除でき、CSVダウンロードと復元に対応。保存シートはアプリ画面のセッションに保持されます。再起動後も保持するためCSVを保存して復元してください。
 
 v2.8.2: Section 3 now infers quote currency as JPY for .T tickers and USD otherwise (user-overridable). USD↔JPY conversion defaults to current cached USDJPY quote; identical currencies use 1.0; manual cross-rate is available. Missing auto rates stop position sizing until resolved. Named capital profiles include total capital, single-ticker budget, risk percent, quote/funding currencies, FX mode/manual rate. Profiles can be saved, loaded, deleted, exported as CSV and restored from CSV. Profile state persists in the current app session; export and restore CSV across restarts.
@@ -59,3 +50,7 @@ v2.8.3: 「分析条件の保存・呼び出し」を追加。保存名、銘柄
 v2.8.4: 全期間「高値・安値の波」チャートの下段に出来高グラフを追加。日付軸を共有し、上段のローソク足と同じ配色（陽線赤・陰線緑）で出来高バーを表示します。
 
 v2.8.5: 全期間波グラフに渡す分析期間データへ株価データの出来高列を追加し、出来高列が取得できない場合もKeyErrorで画面全体が停止しないよう補完。
+
+v2.8.6: BBルール検証の現金・資産評価を修正。Entry時に購入代金と買付手数料を現金から差し引き、保有中は現金＋株式時価、Exit時は売却代金から手数料を加算します。旧版の資金計算は取引後損益・取引サイズを過大表示する場合があるため、新版で必ず再計算してください。
+
+v2.8.7: ユーザー依頼により「仮説を試す研究室」（BB下限ルール損益検証・決算前仮説検証）をアプリから削除。既存のケース分析、価格・波・出来高チャート、市場/セクター表示、AI分析、ケース比較台帳、資金管理、銘柄/分析条件保存は維持。
