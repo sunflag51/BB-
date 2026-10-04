@@ -1,4 +1,5 @@
 """US index context and 11-sector rotation; display-only calculations."""
+import unicodedata
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -29,35 +30,105 @@ SECTOR_NAMES = {
     "Utilities": "XLU", "Real Estate": "XLRE", "Communication Services": "XLC",
 }
 
-@st.cache_data(ttl=86400, show_spinner=False)
+def _normalize_sector(value):
+    value = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(c for c in value if c.isalnum())
+
+
+def match_sector(info):
+    aliases = {_normalize_sector(name): symbol for name, symbol in {**SECTOR_KEYS, **SECTOR_NAMES}.items()}
+    aliases.update({_normalize_sector(name): symbol for symbol, (name, _) in SECTORS.items()})
+    aliases.update({_normalize_sector(name): symbol for name, symbol in {
+        "Information Technology": "XLK", "Consumer Staples": "XLP",
+        "Consumer Discretionary": "XLY", "Financial": "XLF", "通信": "XLC",
+        "テクノロジー": "XLK", "一般消費財・サービス": "XLY", "公益": "XLU"}.items()})
+    for field in ["sectorKey", "sector", "sectorDisp"]:
+        symbol = aliases.get(_normalize_sector(info.get(field)))
+        if symbol:
+            return symbol, str(info[field])
+    return None, str(info.get("sector") or info.get("sectorDisp") or info.get("sectorKey") or "分類なし")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_sector_profile(ticker):
+    failures = []
+    try:
+        info = yf.Ticker(ticker).get_info() or {}
+        symbol, raw = match_sector(info)
+        if symbol:
+            return {"symbol": symbol, "source": "Yahoo Financeの企業情報", "raw": raw}
+        failures.append("企業情報に対応するセクターがありません")
+    except Exception as exc:
+        failures.append("企業情報の取得失敗（" + type(exc).__name__ + "）")
+    # Only use an exact ticker match; similar company names must not classify another stock.
+    try:
+        quotes = yf.Search(ticker, max_results=5, news_count=0, timeout=10).quotes
+        for quote in quotes:
+            if str(quote.get("symbol", "")).strip().upper() == ticker:
+                symbol, raw = match_sector(quote)
+                if symbol:
+                    return {"symbol": symbol, "source": "Yahoo Financeの銘柄検索（コード一致）", "raw": raw}
+        failures.append("コード一致の検索結果にセクター分類がありません")
+    except Exception as exc:
+        failures.append("銘柄検索の取得失敗（" + type(exc).__name__ + "）")
+    # Exceptions are not retained by the successful-profile cache.
+    raise RuntimeError(" / ".join(failures))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def lookup_stock_sector(ticker):
-    ticker = str(ticker).strip().upper()
+    ticker = unicodedata.normalize("NFKC", str(ticker)).strip().upper()
     if ticker in SECTORS:
         return {"symbol": ticker, "source": "選択されたセクターETF", "raw": SECTORS[ticker][0]}
     try:
-        info = yf.Ticker(ticker).get_info()
-        symbol = SECTOR_KEYS.get(info.get("sectorKey")) or SECTOR_NAMES.get(info.get("sector"))
-        return {"symbol": symbol, "source": "Yahoo Financeの企業分類", "raw": info.get("sector", "分類なし")}
-    except Exception:
-        return {"symbol": None, "source": "分類の取得失敗", "raw": "分類を自動取得できませんでした"}
+        return _cached_sector_profile(ticker)
+    except Exception as exc:
+        return {"symbol": None, "source": "分類を取得できませんでした", "raw": str(exc)}
+
+
+def _mark_sector_manual(ticker):
+    st.session_state[f"sector_manual_{ticker}"] = True
 
 
 def selected_sector_control(ticker):
+    ticker = unicodedata.normalize("NFKC", str(ticker)).strip().upper()
+    widget_key = f"chosen_sector_{ticker}"
+    manual_key = f"sector_manual_{ticker}"
+    force_auto = st.button("セクターを再取得して自動選択", key=f"refresh_sector_{ticker}",
+        help="取得し直し、手動指定から自動分類へ戻します。")
+    if force_auto:
+        lookup_stock_sector.clear()
+        _cached_sector_profile.clear()
+        st.session_state[manual_key] = False
     with st.spinner("選択銘柄のセクターを確認しています…"):
         classification = lookup_stock_sector(ticker)
+    detected = classification.get("symbol") or ""
     options = [""] + list(SECTORS)
-    detected = classification["symbol"] or ""
+    previous = st.session_state.get(widget_key, "")
+    if manual_key not in st.session_state:
+        # Migrate old selections: preserve a nonempty manual correction, refresh an old empty field.
+        st.session_state[manual_key] = bool(previous and previous != detected)
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = detected
+    elif not st.session_state[manual_key] and detected:
+        # A changed selectbox index alone does not update an existing widget's state.
+        st.session_state[widget_key] = detected
+    elif previous not in options:
+        st.session_state[widget_key] = ""
     selected = st.selectbox("選択銘柄の所属セクター（自動判定結果を変更できます）", options,
-        index=options.index(detected) if detected in options else 0,
         format_func=lambda s: "未分類・指定なし" if not s else f"{SECTORS[s][0]} ({s})",
-        key=f"chosen_sector_{ticker}")
-    st.caption(f"分類元：{classification['source']}／取得分類：{classification['raw']}。現在の企業分類を使用し、過去の分類変更は再現しません。")
+        key=widget_key, on_change=_mark_sector_manual, args=(ticker,))
+    st.caption(f"取得コード：{ticker}／分類元：{classification['source']}／取得分類：{classification['raw']}。現在の分類を使用し、過去の分類変更は再現しません。")
+    if not detected:
+        st.warning("自動分類を取得できませんでした。再取得ボタンを押すか、所属セクターを手動指定してください。")
     if selected:
-        kind = "自動判定" if selected == detected else "手動指定"
+        if st.session_state[manual_key]:kind = "手動指定"
+        elif detected:kind = "自動判定"
+        else:kind = "前回の選択を維持（今回の分類は未取得）"
         st.success(f"★ {ticker} → {SECTORS[selected][0]} ({selected})｜{kind}")
         st.caption("★は選択銘柄の所属セクターの位置です。銘柄自体の騰落率や、セクター内での銘柄順位ではありません。米国セクターETFを比較対象に使用します。")
     else:
-        st.info("セクターを特定できません。上の欄で指定すると、グラフに★を表示します。幅広い指数ETFには単一の所属セクターを割り当てません。")
+        st.info("上の欄でセクターを指定するとグラフに★を表示します。幅広い指数ETFには単一の所属セクターを割り当てません。")
     return selected or None
 
 
