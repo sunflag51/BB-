@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from market_view import show_market_context
 from ai_view import show_ai_panel
 from strategy_lab_view import show_strategy_lab
@@ -521,27 +522,31 @@ def show_beginner_cards(result, selected_multiplier, currency):
 
 
 def wave_figure(prices, swings, title, show_bb=True):
-    fig = go.Figure()
     dates = pd.to_datetime(prices["日付"]).dt.strftime("%Y-%m-%d")
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.045,
+        row_heights=[0.76, 0.24],
+        subplot_titles=("株価・高値安値の波", "出来高"),
+    )
     fig.add_trace(go.Candlestick(x=dates, open=prices.Open, high=prices.High,
         low=prices.Low, close=prices.Close, name="ローソク足",
         increasing_line_color="#ef5350", increasing_fillcolor="#ef5350",
-        decreasing_line_color="#26a69a", decreasing_fillcolor="#26a69a"))
+        decreasing_line_color="#26a69a", decreasing_fillcolor="#26a69a"), row=1, col=1)
     if show_bb:
         for col, name, color in [("BB_Lower", "BB下限", "#42a5f5"),
                                  ("BB_Middle", "BB中央", "#616161"),
                                  ("BB_Upper", "BB上限", "#42a5f5")]:
             fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
-                mode="lines", line=dict(color=color, width=1)))
+                mode="lines", line=dict(color=color, width=1)), row=1, col=1)
     for col, name, color in [("MA50", "50日線（SMA）", "#7b1fa2"),
                               ("MA200", "200日線（SMA）", "#e65100")]:
         if col in prices.columns:
             fig.add_trace(go.Scatter(x=dates, y=prices[col], name=name,
-                mode="lines", line=dict(color=color, width=2), connectgaps=False))
+                mode="lines", line=dict(color=color, width=2), connectgaps=False), row=1, col=1)
     if not swings.empty:
         sx = pd.to_datetime(swings["日付"]).dt.strftime("%Y-%m-%d")
         fig.add_trace(go.Scatter(x=sx, y=swings["価格"], mode="lines",
-            name="高値・安値の波", line=dict(color="#b8860b", width=2.5)))
+            name="高値・安値の波", line=dict(color="#b8860b", width=2.5)), row=1, col=1)
         for kind, color, symbol in [("高値", "#ef5350", "triangle-down"),
                                      ("安値", "#26a69a", "triangle-up")]:
             q = swings[swings["種類"] == kind]
@@ -551,22 +556,31 @@ def wave_figure(prices, swings, title, show_bb=True):
                 text=[f"{kind} {v:,.2f}" for v in q["価格"]],
                 textposition="top center" if kind == "高値" else "bottom center",
                 customdata=q[["確定日", "前回同種比"]].astype(str).values,
-                hovertemplate="%{x}<br>%{y:,.2f}<br>確定日: %{customdata[0]}<br>%{customdata[1]}<extra></extra>"))
-    fig.update_layout(title=title, template="plotly_white", height=600,
+                hovertemplate="%{x}<br>%{y:,.2f}<br>確定日: %{customdata[0]}<br>%{customdata[1]}<extra></extra>"), row=1, col=1)
+
+    volume = pd.to_numeric(prices["Volume"], errors="coerce").fillna(0)
+    candle_colors = np.where(prices["Close"] >= prices["Open"], "#ef5350", "#26a69a")
+    fig.add_trace(go.Bar(x=dates, y=volume, name="出来高", marker_color=candle_colors,
+        hovertemplate="%{x}<br>出来高: %{y:,.0f}<extra></extra>"), row=2, col=1)
+    fig.update_layout(title=title, template="plotly_white", height=790,
         paper_bgcolor="white", plot_bgcolor="white", font=dict(color="black"),
-        dragmode="pan",
-        margin=dict(l=15, r=70, t=65, b=45),
-        legend=dict(orientation="h", y=1.08),
-        xaxis=dict(type="category", categoryorder="array", categoryarray=list(dates),
-                   rangeslider=dict(visible=False), nticks=10, showspikes=True),
-        yaxis=dict(side="right", title="価格", showspikes=True, fixedrange=False,
-                   gridcolor="#e5e7eb", zerolinecolor="#d1d5db"))
+        dragmode="pan", margin=dict(l=15, r=80, t=90, b=45),
+        legend=dict(orientation="h", y=1.08), barmode="overlay")
+    for axis in ["xaxis", "xaxis2"]:
+        fig.layout[axis].update(type="category", categoryorder="array", categoryarray=list(dates),
+            rangeslider=dict(visible=False), nticks=10, showspikes=True)
+    fig.update_yaxes(side="right", title="価格", showspikes=True, fixedrange=False,
+        gridcolor="#e5e7eb", zerolinecolor="#d1d5db", row=1, col=1)
+    fig.update_yaxes(side="right", title="出来高（株）", showspikes=True, fixedrange=False,
+        gridcolor="#e5e7eb", zerolinecolor="#d1d5db", row=2, col=1)
+    for annotation in fig.layout.annotations:
+        annotation.font = dict(color="black")
     return fig
 
 
 def show_full_period_waves(result):
     st.markdown("#### 全期間：高値・安値の波（基準日前後）")
-    st.caption("分析開始日から分析終了日までのローソク足です。黒い破線が基準日Day0です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波です。")
+    st.caption("分析開始日から分析終了日までのローソク足です。黒い破線が基準日Day0です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波で、その直下に出来高を表示します。")
     width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3,
         help="3なら前後3本より高い高値・低い安値を検出。大きくすると大きな波を見ます。")
     show_bb = st.checkbox("BBバンドを重ねる", value=True)
