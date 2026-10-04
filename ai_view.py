@@ -72,16 +72,56 @@ def descriptive_view(bundle):
 
 
 
+
+def validation_diagnostics(test):
+    rows = []
+    for cls in CLASSES:
+        predicted = int(test["AI判定"].eq(cls).sum())
+        actual = int(test["結果"].eq(cls).sum())
+        correct = int((test["AI判定"].eq(cls) & test["結果"].eq(cls)).sum())
+        rows.append({"分類": cls, "予測日数": predicted, "実際の日数": actual,
+            "正解日数": correct, "予測割合_%": 100 * predicted / len(test) if len(test) else np.nan,
+            "予測の的中率_%": 100 * correct / predicted if predicted else np.nan,
+            "実際を捉えた割合_%": 100 * correct / actual if actual else np.nan})
+    frame = pd.DataFrame(rows)
+    lead = frame.loc[frame["予測日数"].eq(frame["予測日数"].max()), "分類"].tolist()
+    bias = "・".join(lead) + f" {frame['予測割合_%'].max():.1f}%" if len(test) else "算出不可"
+    return frame, bias
+
+
+def show_validation_diagnostics(bundle):
+    frame, bias = validation_diagnostics(bundle["test"])
+    up = frame.loc[frame["分類"].eq("上昇")].iloc[0]
+    down = frame.loc[frame["分類"].eq("下降")].iloc[0]
+    def display(value):
+        return f"{value:.1f}%" if pd.notna(value) else "算出不可"
+    a,b,c,d = st.columns(4)
+    a.metric("AIの正解率", f"{bundle['metrics']['AI正解率']*100:.1f}%")
+    b.metric("上昇予測の的中率", display(up["予測の的中率_%"]))
+    c.metric("下降を捉えた割合", display(down["実際を捉えた割合_%"]))
+    d.metric("予測の偏り（最多分類）", bias)
+    st.caption("上昇の的中率＝上昇と予測して当たった日÷上昇予測日数。下降を捉えた割合＝下降と正しく予測した日÷実際の下降日数。偏り＝最も多く予測した分類とその割合。同数は併記します。")
+    st.write(f"上昇の的中：{int(up['正解日数'])}／{int(up['予測日数'])}日 ｜ 下降の捕捉：{int(down['正解日数'])}／{int(down['実際の日数'])}日")
+    st.caption("予測日数が0の的中率、実際の日数が0の捕捉割合は算出不可です。0%は対象日があるのに正解が0日の場合です。")
+    for _,row in frame.iterrows():
+        if row["実際の日数"] > 0 and row["予測日数"] == 0:
+            st.warning(f"検証期間に実際の『{row['分類']}』は{int(row['実際の日数'])}日ありましたが、AIは一度も『{row['分類']}』と予測していません。")
+    with st.expander("予測の偏り・分類ごとの的中率を詳しく確認"):
+        st.dataframe(frame, hide_index=True, use_container_width=True)
+        st.caption("予測割合だけで良否は決まりません。実際の分類内訳と合わせて確認してください。的中率や捕捉割合は今回の検証期間の実績で、選択日の将来確率ではありません。")
+
+
 def build_ai_copy_report(result, bundle, explanation, day, sector, include_market, width, atr_period):
     """Plain text snapshot of the current explanation and fixed validation."""
     def table(frame):
         return frame.to_csv(index=False, sep="\t", float_format="%.6f").rstrip()
     def counts(frame, column):
         return ", ".join(f"{c}: {int(frame[column].eq(c).sum())}日" for c in CLASSES)
+    diagnostics, bias = validation_diagnostics(bundle["test"])
     actual = explanation["actual"]
     outcome = "未確定（指定期間内の将来データ不足）" if pd.isna(actual["結果"]) else (
         f"{actual['結果']} / {actual['将来騰落率_%']:+.6f}% / 確定日 {actual['結果確定日'].date()}")
-    lines = ["AI分析の確認用レポート v2.6.2",
+    lines = ["AI分析の確認用レポート v2.6.3",
         "この結果の偏り、検証成績、判定理由を初心者向けに確認してください。",
         f"銘柄: {result['ticker']}",
         f"分析期間: {result['analysis_start']} ～ {result['analysis_end']}",
@@ -95,6 +135,11 @@ def build_ai_copy_report(result, bundle, explanation, day, sector, include_marke
         "\n【検証成績】"]
     lines.extend(f"{k}: {v}" for k,v in bundle["metrics"].items())
     lines += ["正解率などは0～1の値（0.60＝60%）。正解率差も同じ尺度。",
+        "\n【的中率・下降の捕捉・予測の偏り】",
+        "予測の偏り（最多分類）: " + bias,
+        table(diagnostics.fillna("算出不可")),
+        "上昇予測の的中率＝上昇正解日数÷上昇予測日数。下降を捉えた割合＝下降正解日数÷実際の下降日数。",
+        "的中率の予測日数0・捕捉割合の実際日数0は算出不可。割合は検証実績で将来確率ではありません。",
         "\n【学習・検証の分類内訳】",
         "学習の実際: " + counts(bundle["train"], "結果"),
         "検証の実際: " + counts(bundle["test"], "結果"),
@@ -156,10 +201,10 @@ def show_ai_panel(result):
         return
     metrics=bundle["metrics"]
     st.markdown("#### 別期間での検証成績")
-    a,b,c=st.columns(3)
-    a.metric("AIの正解率",f"{metrics['AI正解率']*100:.1f}%")
-    b.metric("常に学習多数派を答える正解率",f"{metrics['常に学習多数派を答える正解率']*100:.1f}%")
-    c.metric("AIと基準の差",f"{metrics['正解率差']*100:+.1f} pp")
+    show_validation_diagnostics(bundle)
+    a,b=st.columns(2)
+    a.metric("常に学習多数派を答える正解率",f"{metrics['常に学習多数派を答える正解率']*100:.1f}%")
+    b.metric("AIと基準の差",f"{metrics['正解率差']*100:+.1f} pp")
     if metrics["正解率差"]<=0:
         st.warning("この検証期間では、AIは単純な多数派の回答を上回っていません。判断理由は参考として確認してください。")
     st.caption("前半約75%で学習、後半約25%で検証。モデルは検証開始前に固定し、検証期間で学習し直しません。日数比は未来結果の除外で変わります。")
