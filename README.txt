@@ -1,7 +1,7 @@
-自由銘柄・自由期間 BB下限ケース分析 v2.8.0
+自由銘柄・自由期間 BB下限ケース分析 v2.8.1
 
 ファイルをすべて同じフォルダへ配置してください。
- main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / requirements.txt
+ main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / ticker_sheet.py / requirements.txt
 ローカル: pip install -r requirements.txt → streamlit run main.py
 Streamlit Cloud: 上記ファイルをリポジトリへ配置し、main.pyを指定します。
 
@@ -47,3 +47,5 @@ BB下限ルール：条件は画面で変更可能。BB20・2σ、ATR14、Stop1.
 決算仮説：実際に確認した決算日を1行ずつ入力。自動カレンダーは使わず、誤った日付の混入を避けます。各決算日の前20営業日（変更可）で、初日終値から最高値までの上昇幅と、最高値から決算直前終値までの反落幅を測ります。「利益確定売り」は説明候補であって原因を証明しません。決算後の値動きは現版では対象外。
 
 結果は各CSV/相談レポートから保存できます。表示した数値は過去検証で将来損益を保証しません。仮説や取引条件を変えて再計算し、未使用期間でも検証してください。
+
+v2.8.1: 銘柄の会社名付き選択（COST コストコ、NVDA エヌビディア、GOOG、MSFT、AAPL、ISRG、任天堂7974.T、アドバンテスト6857.T）を追加。任意コード入力可。別枠の銘柄保存シートへ追加・削除でき、CSVダウンロードと復元に対応。保存シートはアプリ画面のセッションに保持されます。再起動後も保持するためCSVを保存して復元してください。

@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from market_view import show_market_context
 from ai_view import show_ai_panel
 from strategy_lab_view import show_strategy_lab
+from ticker_sheet import PRESET_TICKERS, normalize_sheet, add_ticker, remove_tickers, options_with_saved, normalize_ticker
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -78,10 +79,65 @@ if not ledger.empty:
     )
 
 st.divider()
+st.subheader("銘柄の保存シート")
+if "saved_tickers" not in st.session_state:
+    st.session_state.saved_tickers = pd.DataFrame(columns=["銘柄コード", "銘柄名"])
+st.session_state.saved_tickers = normalize_sheet(st.session_state.saved_tickers)
+with st.expander("銘柄を追加・削除・保存／復元", expanded=False):
+    st.caption("一覧はこの画面で追加・削除できます。CSVをダウンロードしておくと、次回起動時にも復元できます。")
+    saved_now=st.session_state.saved_tickers.copy()
+    if not saved_now.empty:
+        st.dataframe(saved_now,hide_index=True,use_container_width=True)
+        remove_options={f"{row['銘柄コード']}（{row['銘柄名']}）":row['銘柄コード'] for _,row in saved_now.iterrows()}
+        remove_labels=["削除する銘柄を選択"]+list(remove_options)
+        delete_key="ticker_sheet_remove"
+        if st.session_state.get(delete_key) not in remove_labels:st.session_state[delete_key]=remove_labels[0]
+        remove_label=st.selectbox("削除する銘柄",remove_labels,key=delete_key)
+        if st.button("選んだ銘柄を削除",key="delete_saved_tickers"):
+            code=remove_options.get(remove_label)
+            if code:
+                st.session_state.saved_tickers=remove_tickers(st.session_state.saved_tickers,[code])
+                st.rerun()
+    else:
+        st.info("保存シートは空です。銘柄を選び『選択銘柄を保存シートに追加』を押してください。")
+    st.download_button("保存シートCSVをダウンロード",
+        st.session_state.saved_tickers.to_csv(index=False).encode("utf-8-sig"),
+        file_name="saved_tickers.csv",mime="text/csv",key="download_saved_tickers")
+    uploaded_watchlist=st.file_uploader("以前保存した銘柄シートCSVを読み込む",type=["csv"],key="upload_saved_tickers")
+    if uploaded_watchlist is not None:
+        if st.button("CSVの内容で銘柄シートを復元",key="restore_saved_tickers"):
+            try:
+                raw_sheet=pd.read_csv(uploaded_watchlist)
+                aliases={"ticker":"銘柄コード","symbol":"銘柄コード","code":"銘柄コード","name":"銘柄名"}
+                incoming_columns={aliases.get(str(c).strip().casefold(),c) for c in raw_sheet.columns}
+                if "銘柄コード" not in incoming_columns:raise ValueError("CSVに『銘柄コード』列がありません。")
+                st.session_state.saved_tickers=normalize_sheet(raw_sheet)
+                st.rerun()
+            except Exception as exc:st.error(f"CSVを読み込めませんでした。銘柄コード・銘柄名の列を確認してください。{exc}")
+
 st.subheader("1. 銘柄と分析期間")
 c1, c2 = st.columns(2)
 with c1:
-    ticker = st.text_input("銘柄コード", value="COST", help="例: COST / AAPL / NVDA / 6857.T")
+    ticker_options=options_with_saved(st.session_state.saved_tickers)
+    ticker_labels=list(ticker_options)
+    current=st.session_state.get("ticker_choice","COST（コストコ）")
+    if current not in ticker_options:current="COST（コストコ）"
+    if st.session_state.get("ticker_choice") not in ticker_options:
+        st.session_state["ticker_choice"]=current
+    ticker_choice=st.selectbox("銘柄（会社名付き）",ticker_labels,index=ticker_labels.index(current),key="ticker_choice")
+    selected_code=ticker_options[ticker_choice]
+    if selected_code=="__CUSTOM__":
+        ticker=normalize_ticker(st.text_input("銘柄コードを入力",value="",placeholder="例: AMZN / 7203.T",key="ticker_custom"))
+        custom_name=st.text_input("保存シートに表示する会社名（任意）",value="",placeholder="例: Amazon",key="ticker_custom_name")
+    else:
+        ticker=selected_code
+        custom_name=None
+    st.caption(f"分析に使うコード：{ticker or '未入力'}")
+    if ticker and st.button("選択銘柄を保存シートに追加",key="add_saved_ticker"):
+        updated,added=add_ticker(st.session_state.saved_tickers,ticker,custom_name or None)
+        st.session_state.saved_tickers=updated
+        if added:st.rerun()
+        else:st.info("この銘柄は登録済みです。")
 with c2:
     case_date = st.date_input("BB下限付近の基準日（Day0）", value=date.today() - timedelta(days=30))
 c3, c4 = st.columns(2)
