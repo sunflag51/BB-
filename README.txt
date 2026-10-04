@@ -1,4 +1,4 @@
-自由銘柄・自由期間 BB下限ケース分析 v2.8.4
+自由銘柄・自由期間 BB下限ケース分析 v2.8.5
 
 ファイルをすべて同じフォルダへ配置してください。
  main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / strategy_lab.py / strategy_lab_view.py / ticker_sheet.py / capital_profiles.py / analysis_profiles.py / requirements.txt
@@ -57,3 +57,5 @@ v2.8.2: 資金通貨JPY/USD選択。株価通貨は.TならJPY、それ以外USD
 v2.8.3: 「分析条件の保存・呼び出し」を追加。保存名、銘柄コード・銘柄名、基準日（Day0）、分析開始日、分析終了日を一組で保存・呼び出し・削除できます。任意銘柄もコードと表示名を復元します。呼び出し時は選択銘柄と3つの日付を更新し、以前の分析表示を消してから新しい条件で再分析します。CSVダウンロードと復元に対応。保存条件は画面セッション中に保持されるため、再起動後はCSVを読み込んでください。
 
 v2.8.4: 全期間「高値・安値の波」チャートの下段に出来高グラフを追加。日付軸を共有し、上段のローソク足と同じ配色（陽線赤・陰線緑）で出来高バーを表示します。
+
+v2.8.5: 全期間波グラフに渡す分析期間データへ株価データの出来高列を追加し、出来高列が取得できない場合もKeyErrorで画面全体が停止しないよう補完。

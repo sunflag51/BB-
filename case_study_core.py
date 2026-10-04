@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.8.4"
+APP_VERSION="2.8.5"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -149,7 +149,7 @@ def money_scenarios(design,ps,selected,fx,currency,comm,slip):
 def path_table(df,start,end,d):
     p=df.loc[(df.index>=start)&(df.index<=end)]; base=float(df.loc[d,"Close"])
     if p.empty:return pd.DataFrame()
-    return pd.DataFrame({"日付":p.index.date,"Day0区分":["Day0" if x==d else ("前" if x<d else "後") for x in p.index],"Open":p.Open.values,"High":p.High.values,"Low":p.Low.values,"Close":p.Close.values,"BB_Lower":p.BB_Lower.values,"BB_Middle":p.BB_Middle.values,"BB_Upper":p.BB_Upper.values,"MA50":p.MA50.values,"MA200":p.MA200.values,"ATR":p.ATR.values,"ATR_%":p.ATR_Pct.values,"Day0終値比_%":(p.Close.values/base-1)*100})
+    return pd.DataFrame({"日付":p.index.date,"Day0区分":["Day0" if x==d else ("前" if x<d else "後") for x in p.index],"Open":p.Open.values,"High":p.High.values,"Low":p.Low.values,"Close":p.Close.values,"BB_Lower":p.BB_Lower.values,"BB_Middle":p.BB_Middle.values,"BB_Upper":p.BB_Upper.values,"MA50":p.MA50.values,"MA200":p.MA200.values,"ATR":p.ATR.values,"ATR_%":p.ATR_Pct.values,"Volume":p["Volume"].values if "Volume" in p.columns else np.nan,"Day0終値比_%":(p.Close.values/base-1)*100})
 
 def risk_diagnostic(design):
     if design is None or design.empty:return pd.DataFrame()

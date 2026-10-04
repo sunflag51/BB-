@@ -558,7 +558,8 @@ def wave_figure(prices, swings, title, show_bb=True):
                 customdata=q[["確定日", "前回同種比"]].astype(str).values,
                 hovertemplate="%{x}<br>%{y:,.2f}<br>確定日: %{customdata[0]}<br>%{customdata[1]}<extra></extra>"), row=1, col=1)
 
-    volume = pd.to_numeric(prices["Volume"], errors="coerce").fillna(0)
+    volume = (pd.to_numeric(prices["Volume"], errors="coerce").fillna(0)
+              if "Volume" in prices.columns else pd.Series(0, index=prices.index, dtype="float64"))
     candle_colors = np.where(prices["Close"] >= prices["Open"], "#ef5350", "#26a69a")
     fig.add_trace(go.Bar(x=dates, y=volume, name="出来高", marker_color=candle_colors,
         hovertemplate="%{x}<br>出来高: %{y:,.0f}<extra></extra>"), row=2, col=1)
