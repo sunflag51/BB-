@@ -111,6 +111,68 @@ def show_validation_diagnostics(bundle):
         st.caption("予測割合だけで良否は決まりません。実際の分類内訳と合わせて確認してください。的中率や捕捉割合は今回の検証期間の実績で、選択日の将来確率ではありません。")
 
 
+
+def condition_diagnostics(bundle):
+    """Group the fixed model's training and validation rows by exact leaf."""
+    model, columns = bundle["model"], bundle["columns"]
+    test = bundle["test"].copy()
+    train = bundle["train"]
+    test["判断条件番号"] = model.apply(test[columns]).astype(int)
+    train_leaves = model.apply(train[columns])
+    train_predictions = model.predict(train[columns])
+    rows = []
+    for leaf in sorted(set(train_leaves)):
+        mask = train_leaves == leaf
+        learning = train.loc[mask]
+        validation = test.loc[test["判断条件番号"].eq(leaf)]
+        prediction = str(train_predictions[mask][0])
+        correct = int(validation["一致"].sum())
+        if len(validation):
+            explanation = explain_day(bundle, validation.index[0])
+            conditions = " / ".join(explanation["rules"].get("条件", pd.Series(dtype=str))) or "特徴による分岐なし"
+        else:
+            conditions = "検証で該当日なし"
+        row = {"判断条件番号": int(leaf), "AI判定": prediction,
+            "学習日数": len(learning), "検証日数": len(validation), "検証正解日数": correct,
+            "検証的中率_%": 100 * correct / len(validation) if len(validation) else np.nan,
+            "検証初日": validation.index.min() if len(validation) else pd.NaT,
+            "検証最終日": validation.index.max() if len(validation) else pd.NaT,
+            "判断条件": conditions}
+        for cls in CLASSES:
+            row[f"学習の{cls}日数"] = int(learning["結果"].eq(cls).sum())
+            row[f"検証の実際の{cls}日数"] = int(validation["結果"].eq(cls).sum())
+        rows.append(row)
+    summary = pd.DataFrame(rows)
+    visited = summary.loc[summary["検証日数"].gt(0)]
+    if len(visited) == 1:
+        message = f"検証{len(test)}日すべてが、同じ判断条件番号 {int(visited.iloc[0]['判断条件番号'])} に入りました。"
+    elif visited["AI判定"].nunique() == 1:
+        message = f"検証では{len(visited)}種類の判断条件に入りましたが、いずれも『{visited.iloc[0]['AI判定']}』を答える条件でした。"
+    else:
+        message = f"検証では{len(visited)}種類の判断条件に入り、{visited['AI判定'].nunique()}種類の分類を予測しました。"
+    return test, summary, message
+
+
+def show_condition_diagnostics(bundle, explanation):
+    test, summary, message = condition_diagnostics(bundle)
+    st.markdown("#### 同じ分類が続く理由：判断条件ごとの検証")
+    st.info(message)
+    shown = summary.copy()
+    shown["検証的中率_%"] = shown["検証的中率_%"].map(lambda v: f"{v:.2f}" if pd.notna(v) else "算出不可")
+    for col in ["検証初日", "検証最終日"]:
+        shown[col] = shown[col].map(lambda v: v.strftime("%Y-%m-%d") if pd.notna(v) else "該当なし")
+    shown.insert(0, "選択日の条件", shown["判断条件番号"].eq(explanation["leaf"]).map({True:"★", False:""}))
+    st.caption("判断条件番号は、決定木の最終的な条件の組み合わせを識別する番号です。順位・強さ・確率ではありません。設定や学習期間を変えると番号の意味も変わります。★は現在の選択日と同じ条件です。")
+    main = ["選択日の条件", "判断条件番号", "AI判定", "学習日数", "検証日数", "検証正解日数", "検証的中率_%"]
+    st.dataframe(shown[main], hide_index=True, use_container_width=True)
+    st.caption("検証的中率＝この条件で正しく分類した日÷この条件の検証日数。検証0日は算出不可です。学習の割合と検証の的中率を区別してください。")
+    with st.expander("条件ごとの学習内訳・検証の実際・分岐条件"):
+        st.dataframe(shown, hide_index=True, use_container_width=True)
+        st.download_button("判断条件ごとの検証CSVを保存", summary.to_csv(index=False).encode("utf-8-sig"),
+            file_name="ai_condition_validation.csv", mime="text/csv", key="ai_condition_csv")
+    return test
+
+
 def build_ai_copy_report(result, bundle, explanation, day, sector, include_market, width, atr_period):
     """Plain text snapshot of the current explanation and fixed validation."""
     def table(frame):
@@ -118,10 +180,11 @@ def build_ai_copy_report(result, bundle, explanation, day, sector, include_marke
     def counts(frame, column):
         return ", ".join(f"{c}: {int(frame[column].eq(c).sum())}日" for c in CLASSES)
     diagnostics, bias = validation_diagnostics(bundle["test"])
+    condition_test, condition_summary, condition_message = condition_diagnostics(bundle)
     actual = explanation["actual"]
     outcome = "未確定（指定期間内の将来データ不足）" if pd.isna(actual["結果"]) else (
         f"{actual['結果']} / {actual['将来騰落率_%']:+.6f}% / 確定日 {actual['結果確定日'].date()}")
-    lines = ["AI分析の確認用レポート v2.6.3",
+    lines = ["AI分析の確認用レポート v2.6.4",
         "この結果の偏り、検証成績、判定理由を初心者向けに確認してください。",
         f"銘柄: {result['ticker']}",
         f"分析期間: {result['analysis_start']} ～ {result['analysis_end']}",
@@ -146,13 +209,16 @@ def build_ai_copy_report(result, bundle, explanation, day, sector, include_marke
         "検証のAI予測: " + counts(bundle["test"], "AI判定"),
         "\n【検証の混同行列：行＝実際、列＝予測】",
         table(bundle["confusion"].reset_index()),
+        "\n【判断条件ごとの検証】", condition_message,
+        "判断条件番号はモデル内の識別番号で、順位や確率ではありません。検証0日は的中率を算出できません。",
+        table(condition_summary.fillna("該当なし")),
         "\n【選択日の判定理由】",
         table(explanation["rules"]) if not explanation["rules"].empty else "特徴による分岐なし（学習多数派）",
         "\n【選択日の全特徴量】", table(explanation["values"].reset_index(names="日付")),
         "\n【同じ条件の学習例】", table(explanation["distribution"]),
         "\n【検証で役立った特徴：正解率低下・ばらつきの単位はpp】", table(bundle["importance"]),
         "\n【直近20検証日の予測と実際】",
-        table(bundle["test"][["AI判定", "結果", "将来騰落率_%", "結果確定日"]].tail(20).reset_index(names="日付")),
+        table(condition_test[["判断条件番号", "AI判定", "結果", "将来騰落率_%", "結果確定日"]].tail(20).reset_index(names="日付")),
         "\n【注意・取得状況】", *bundle.get("notes", []),
         "モデルは検証開始前に固定。学習の未来結果は境界で除外。株価は調整済み。",
         "同じ条件の割合は過去学習例の比率で、将来確率や原因の証明ではありません。"]
@@ -223,6 +289,7 @@ def show_ai_panel(result):
         format_func=lambda d:d.strftime("%Y-%m-%d"),key=f"ai_reason_date_{key}")
     explanation=explain_day(bundle,day)
     st.success(f"{ticker}｜{day.date()}の特徴からのAI分類：{explanation['prediction']}")
+    condition_test = show_condition_diagnostics(bundle, explanation)
     report = build_ai_copy_report(result, bundle, explanation, day, sector, include_market, width, atr_period)
     with st.expander("AI結果をコピーして相談する", expanded=True):
         st.caption("下の枠の右上にあるコピーアイコン（重なった四角）を押し、この会話に貼り付けてください。選択日を変えると内容も更新されます。")
@@ -273,7 +340,7 @@ def show_ai_panel(result):
     st.dataframe(importance,hide_index=True,use_container_width=True)
     descriptive_view(bundle)
     with st.expander("全検証日と予測を確認・保存"):
-        test=bundle["test"].reset_index(names="日付")
+        test=condition_test.reset_index(names="日付")
         st.dataframe(test,hide_index=True,use_container_width=True)
         st.download_button("AI検証結果CSVを保存",test.to_csv(index=False).encode("utf-8-sig"),file_name="ai_validation.csv",mime="text/csv")
     with st.expander("AIに渡した特徴と計算方法"):
