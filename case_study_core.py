@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.5.1"
+APP_VERSION="2.6.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -177,7 +177,7 @@ def run_case_study(ticker,requested_date,analysis_start,analysis_end,commission=
     if not visual.empty:
         visual["方式"]=visual.シグナル.astype(str)+"｜"+visual.Stop方式.astype(str)
         visual=visual[["方式","Entry_Open","Stop","1R","1R_%","ATR_シグナル日","1R_ATR倍率"]]
-    return {"error":None,"ticker":_clean_ticker(ticker),"day0":day0,"date_note":note,"analysis_start":actual_start,"analysis_end":actual_end,"day0_summary":case_summary(df,day0,atr_period),"pre_summary":pre_summary(df,actual_start,day0,atr_period),"signal_window":find_signals(df,day0),"risk_design":design,"risk_diagnostic":risk_diagnostic(design),"position_sizing":ps,"money_scenarios":scenarios,"outcomes":build_outcomes(df,design,actual_end,commission,slippage),"path":path_table(df,actual_start,actual_end,day0),"risk_visual":visual}
+    return {"error":None,"atr_period":int(atr_period),"ticker":_clean_ticker(ticker),"day0":day0,"date_note":note,"analysis_start":actual_start,"analysis_end":actual_end,"day0_summary":case_summary(df,day0,atr_period),"pre_summary":pre_summary(df,actual_start,day0,atr_period),"signal_window":find_signals(df,day0),"risk_design":design,"risk_diagnostic":risk_diagnostic(design),"position_sizing":ps,"money_scenarios":scenarios,"outcomes":build_outcomes(df,design,actual_end,commission,slippage),"path":path_table(df,actual_start,actual_end,day0),"risk_visual":visual}
 
 
 # ============================================================

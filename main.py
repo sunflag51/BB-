@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from market_view import show_market_context
+from ai_view import show_ai_panel
 from case_study_core import (
     APP_VERSION, fetch_usd_jpy, confirmed_full_period_swings, run_case_study, empty_case_ledger, build_case_ledger_rows,
     merge_case_ledgers, normalize_case_ledger, case_ledger_case_list,
@@ -17,8 +18,8 @@ from case_study_core import (
 
 st.set_page_config(page_title="自由銘柄・自由期間 BB下限ケース分析", page_icon="🔎", layout="wide")
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
-st.caption(f"Version {APP_VERSION} ｜ 1ケース分析を維持＋初心者向けグラフィック表示を追加")
-st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。AI売買判定は行いません。")
+st.caption(f"Version {APP_VERSION} ｜ ケース分析・市場セクター・判断理由を確認するAI分析")
+st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。AIは上昇・下降の特徴を分析します。自動売買は行いません。")
 
 if "case_ledger" not in st.session_state:
     st.session_state.case_ledger = empty_case_ledger()
@@ -604,6 +605,7 @@ if result:
     show_beginner_cards(result, selected_atr_multiplier, capital_currency)
     show_single_case_graphics(result)
     show_market_context(result)
+    show_ai_panel(result)
 
     st.divider()
     st.subheader("6. 詳細データ（従来表示）")
