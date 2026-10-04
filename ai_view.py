@@ -71,6 +71,49 @@ def descriptive_view(bundle):
     st.write(DEFINITIONS.get(feature,""))
 
 
+
+def build_ai_copy_report(result, bundle, explanation, day, sector, include_market, width, atr_period):
+    """Plain text snapshot of the current explanation and fixed validation."""
+    def table(frame):
+        return frame.to_csv(index=False, sep="\t", float_format="%.6f").rstrip()
+    def counts(frame, column):
+        return ", ".join(f"{c}: {int(frame[column].eq(c).sum())}日" for c in CLASSES)
+    actual = explanation["actual"]
+    outcome = "未確定（指定期間内の将来データ不足）" if pd.isna(actual["結果"]) else (
+        f"{actual['結果']} / {actual['将来騰落率_%']:+.6f}% / 確定日 {actual['結果確定日'].date()}")
+    lines = ["AI分析の確認用レポート v2.6.2",
+        "この結果の偏り、検証成績、判定理由を初心者向けに確認してください。",
+        f"銘柄: {result['ticker']}",
+        f"分析期間: {result['analysis_start']} ～ {result['analysis_end']}",
+        f"理由を確認する日: {pd.Timestamp(day).date()}",
+        f"判定: {bundle['horizon']}営業日後 / 上昇・下降幅 ±{bundle['threshold']:g}%",
+        f"波確認本数: {width} / ATR期間: {atr_period}",
+        f"米国市場特徴使用: {include_market} / 所属セクター: {sector or '未選択'}",
+        f"株価最終日: {bundle.get('price_asof', '不明')}",
+        f"AI分類: {explanation['prediction']} / 判断条件番号: {explanation['leaf']}",
+        f"実際の将来結果: {outcome}",
+        "\n【検証成績】"]
+    lines.extend(f"{k}: {v}" for k,v in bundle["metrics"].items())
+    lines += ["正解率などは0～1の値（0.60＝60%）。正解率差も同じ尺度。",
+        "\n【学習・検証の分類内訳】",
+        "学習の実際: " + counts(bundle["train"], "結果"),
+        "検証の実際: " + counts(bundle["test"], "結果"),
+        "検証のAI予測: " + counts(bundle["test"], "AI判定"),
+        "\n【検証の混同行列：行＝実際、列＝予測】",
+        table(bundle["confusion"].reset_index()),
+        "\n【選択日の判定理由】",
+        table(explanation["rules"]) if not explanation["rules"].empty else "特徴による分岐なし（学習多数派）",
+        "\n【選択日の全特徴量】", table(explanation["values"].reset_index(names="日付")),
+        "\n【同じ条件の学習例】", table(explanation["distribution"]),
+        "\n【検証で役立った特徴：正解率低下・ばらつきの単位はpp】", table(bundle["importance"]),
+        "\n【直近20検証日の予測と実際】",
+        table(bundle["test"][["AI判定", "結果", "将来騰落率_%", "結果確定日"]].tail(20).reset_index(names="日付")),
+        "\n【注意・取得状況】", *bundle.get("notes", []),
+        "モデルは検証開始前に固定。学習の未来結果は境界で除外。株価は調整済み。",
+        "同じ条件の割合は過去学習例の比率で、将来確率や原因の証明ではありません。"]
+    return "\n".join(lines)
+
+
 def show_ai_panel(result):
     st.subheader("AI特徴分析：判断の理由を確認する")
     st.caption("選択した銘柄・分析期間の各営業日を分析します。BBイベントの日だけに限定しません。調整済み株価を使うため、従来の価格チャートと株価が異なる場合があります。")
@@ -135,6 +178,12 @@ def show_ai_panel(result):
         format_func=lambda d:d.strftime("%Y-%m-%d"),key=f"ai_reason_date_{key}")
     explanation=explain_day(bundle,day)
     st.success(f"{ticker}｜{day.date()}の特徴からのAI分類：{explanation['prediction']}")
+    report = build_ai_copy_report(result, bundle, explanation, day, sector, include_market, width, atr_period)
+    with st.expander("AI結果をコピーして相談する", expanded=True):
+        st.caption("下の枠の右上にあるコピーアイコン（重なった四角）を押し、この会話に貼り付けてください。選択日を変えると内容も更新されます。")
+        st.code(report, language=None)
+        st.download_button("同じAI結果をテキストで保存", report.encode("utf-8-sig"),
+            file_name=f"ai_report_{ticker.replace('/', '_')}_{day.strftime('%Y%m%d')}.txt", mime="text/plain", key=f"ai_report_download_{key}")
     actual=explanation["actual"]
     if pd.isna(actual["結果"]):st.write("実際の結果：指定期間内に将来データが足りないため未確定です。")
     else:st.write(f"実際の{horizon}営業日後：{actual['結果']}（{actual['将来騰落率_%']:+.2f}%）、確定日 {actual['結果確定日'].date()}")
