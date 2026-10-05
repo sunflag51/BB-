@@ -1,7 +1,7 @@
-自由銘柄・自由期間 BB下限ケース分析 v2.8.9
+自由銘柄・自由期間 BB下限ケース分析 v2.9.0
 
 ファイルをすべて同じフォルダへ配置してください。
- main.py / case_study_core.py / market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / ticker_sheet.py / capital_profiles.py / analysis_profiles.py / requirements.txt
+ main.py / case_study_core.py / market_view.py / jp_market_view.py / ai_analysis.py / ai_view.py / ai_walkforward.py / ai_walkforward_view.py / ticker_sheet.py / capital_profiles.py / analysis_profiles.py / requirements.txt
 ローカル: pip install -r requirements.txt → streamlit run main.py
 Streamlit Cloud: 上記ファイルをリポジトリへ配置し、main.pyを指定します。
 
@@ -58,3 +58,6 @@ v2.8.7: ユーザー依頼により「仮説を試す研究室」（BB下限ル�
 v2.8.8: 分析条件保存の再表示と復元を改善。保存後に一覧を即時更新し、呼び出し後は銘柄と3つの日付を反映したことを通知。CSVはUTF-8 BOMを含めて読み、必須列を検査してから置換し、不正CSVなら既存条件を保持。一覧選択肢に保存名・銘柄・期間を表示。
 
 v2.8.9: 各CSVアップロード欄のヘルプ表示に対応するファイル名の例（比較台帳・銘柄シート・分析条件・資金設定）を追加。
+
+v2.9.0: 日本株（.T）で市場・セクター表示を日本向けに自動切替。日経平均とTOPIX/JPX日経400/グロース250連動ETF代用を明示。TOPIX-17業種ETFによる強弱・主導カラー帯・順位・選択業種★表示。アドバンテスト、任天堂は日本業種対応表、その他は企業情報の業種名の限定対応で自動選択。不明は手動指定。欠損時は未判定。日本市場表示の追加はAIの米国市場特徴を変更しません。
+参考: https://www.jpx.co.jp/equities/products/etfs/issues/01-03.html
