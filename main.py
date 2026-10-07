@@ -7,7 +7,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from market_view import show_market_context
-from ai_view import show_ai_panel
+from wave_analysis_view import show_wave_analysis
 from ticker_sheet import PRESET_TICKERS, normalize_sheet, add_ticker, remove_tickers, options_with_saved, normalize_ticker
 from capital_profiles import normalize_profiles, profile_values, save_profile, delete_profile, PROFILE_FIELDS, conversion_rate
 from analysis_profiles import normalize_analysis_profiles, save_analysis_profile, delete_analysis_profile, get_analysis_profile, parse_analysis_profiles_csv, PROFILE_FIELDS as ANALYSIS_PROFILE_FIELDS
@@ -38,8 +38,8 @@ if "capital_profiles" not in st.session_state:st.session_state.capital_profiles=
 st.title("🔎 自由銘柄・自由期間 BB下限ケース分析")
 if st.session_state.get("analysis_profile_notice"):
     st.success(st.session_state.pop("analysis_profile_notice"))
-st.caption(f"Version {APP_VERSION} ｜ ケース分析・市場セクター・判断理由を確認するAI分析")
-st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。AIは上昇・下降の特徴を分析します。自動売買は行いません。")
+st.caption(f"Version {APP_VERSION} ｜ ケース分析・市場セクター・過去の波の条件分析")
+st.info("このアプリは『何を見ればよいか分からない』を減らすため、表だけでなく、先に見るべきポイントをカード・グラフで表示します。過去に完了した波の開始条件と結果を分析します。自動売買は行いません。")
 
 if "case_ledger" not in st.session_state:
     st.session_state.case_ledger = empty_case_ledger()
@@ -594,7 +594,7 @@ def wave_figure(prices, swings, title, show_bb=True):
 def show_full_period_waves(result):
     st.markdown("#### 全期間：高値・安値の波（基準日前後）")
     st.caption("分析開始日から分析終了日までのローソク足です。黒い破線が基準日Day0です。赤は陽線、緑は陰線。紫は50日線、オレンジは200日線、金色は高値と安値を結ぶ波で、その直下に出来高を表示します。")
-    width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3,
+    width = st.slider("転換点の前後に確認する営業日数", 1, 10, 3, key="wave_width",
         help="3なら前後3本より高い高値・低い安値を検出。大きくすると大きな波を見ます。")
     show_bb = st.checkbox("BBバンドを重ねる", value=True)
     path = result["path"].copy()
@@ -627,6 +627,7 @@ def show_full_period_waves(result):
             st.dataframe(swings, use_container_width=True, hide_index=True)
             st.download_button("波の一覧CSVを保存", swings.to_csv(index=False).encode("utf-8-sig"),
                 file_name="full_period_swings.csv", mime="text/csv")
+    show_wave_analysis(result, path, swings, width)
 
 
 def show_readable_comparison(data, value_col, axis_title, key):
@@ -849,7 +850,6 @@ if result:
     show_beginner_cards(result, selected_atr_multiplier, capital_currency)
     show_single_case_graphics(result)
     show_market_context(result)
-    show_ai_panel(result)
 
     st.divider()
     st.subheader("6. 詳細データ（従来表示）")

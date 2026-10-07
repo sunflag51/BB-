@@ -231,7 +231,7 @@ def show_market_context(result):
     st.subheader("市場の動向・セクターローテーション（日本市場）")
     st.caption("日本の4指標（日経平均指数＋3つの指数連動ETF代用）とTOPIX-17業種ETFで計算します。売買・Stopの計算には使用しません。")
     ticker = str(result["ticker"]).upper()
-    st.caption("日本株コード（.T）から自動切替。日本業種の自動対応は企業情報の業種名を使用し、不明な銘柄は手動指定できます。AI欄の米国市場特徴とは別の表示用計算です。")
+    st.caption("日本株コード（.T）から自動切替。日本業種の自動対応は企業情報の業種名を使用し、不明な銘柄は手動指定できます。市場・業種の参考情報です。過去の波の条件分析とは別に表示します。")
     selected = selected_sector_control(ticker)
     horizon = st.selectbox("市場・セクターの比較期間（営業日）", [5, 20, 60], index=1, key="jp_market_horizon")
     if st.button("市場・セクターデータを再取得", key="jp_refresh_market"):

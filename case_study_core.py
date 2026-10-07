@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION="2.9.0"
+APP_VERSION="3.0.0"
 BB_PERIOD=20; BB_STD=2.0; BW_LOOKBACK=125; CASE_WINDOW_DAYS=3; HORIZONS=(5,10,20)
 
 def _clean_ticker(t): return str(t or "").strip().upper()
@@ -38,6 +38,21 @@ def add_indicators(df,atr_period=14):
     df["Prev_Low"]=df.Low.shift(1); df["Prev_Close"]=df.Close.shift(1); df["Prev_High"]=df.High.shift(1)
     df["Higher_Low"]=df.Low>df.Prev_Low; df["Close_Up"]=df.Close>df.Prev_Close
     df["Decline_Stop"]=df.Higher_Low & df.Close_Up; df["Rebound_Start"]=df.Close>df.Prev_High
+    # Start-day descriptions are calculated before the display-period slice.
+    df["過去1日騰落率_%"]=df.Close.pct_change(1,fill_method=None)*100
+    df["過去5日騰落率_%"]=df.Close.pct_change(5,fill_method=None)*100
+    df["過去20日騰落率_%"]=df.Close.pct_change(20,fill_method=None)*100
+    df["50日線乖離_%"]=(df.Close/df.MA50-1)*100
+    df["200日線乖離_%"]=(df.Close/df.MA200-1)*100
+    df["50日線の5日変化_%"]=df.MA50.pct_change(5,fill_method=None)*100
+    df["200日線の20日変化_%"]=df.MA200.pct_change(20,fill_method=None)*100
+    volume=pd.to_numeric(df.get("Volume",pd.Series(np.nan,index=df.index)),errors="coerce")
+    df["出来高比_倍"]=volume/volume.shift(1).rolling(20).mean().replace(0,np.nan)
+    df["BB内位置_%"]=(df.Close-df.BB_Lower)/(df.BB_Upper-df.BB_Lower).replace(0,np.nan)*100
+    df["BB幅_%"]=df.BandWidth*100
+    df["実体_%"]=(df.Close/df.Open-1)*100
+    df["BB下限接触"]=np.where(df.BB_Lower.notna(),(df.Low<=df.BB_Lower).astype(float),np.nan)
+    df["BB上限接触"]=np.where(df.BB_Upper.notna(),(df.High>=df.BB_Upper).astype(float),np.nan)
     return df
 
 def resolve_case_date(df,d):
@@ -149,7 +164,11 @@ def money_scenarios(design,ps,selected,fx,currency,comm,slip):
 def path_table(df,start,end,d):
     p=df.loc[(df.index>=start)&(df.index<=end)]; base=float(df.loc[d,"Close"])
     if p.empty:return pd.DataFrame()
-    return pd.DataFrame({"日付":p.index.date,"Day0区分":["Day0" if x==d else ("前" if x<d else "後") for x in p.index],"Open":p.Open.values,"High":p.High.values,"Low":p.Low.values,"Close":p.Close.values,"BB_Lower":p.BB_Lower.values,"BB_Middle":p.BB_Middle.values,"BB_Upper":p.BB_Upper.values,"MA50":p.MA50.values,"MA200":p.MA200.values,"ATR":p.ATR.values,"ATR_%":p.ATR_Pct.values,"Volume":p["Volume"].values if "Volume" in p.columns else np.nan,"Day0終値比_%":(p.Close.values/base-1)*100})
+    table = pd.DataFrame({"日付":p.index.date,"Day0区分":["Day0" if x==d else ("前" if x<d else "後") for x in p.index],"Open":p.Open.values,"High":p.High.values,"Low":p.Low.values,"Close":p.Close.values,"BB_Lower":p.BB_Lower.values,"BB_Middle":p.BB_Middle.values,"BB_Upper":p.BB_Upper.values,"MA50":p.MA50.values,"MA200":p.MA200.values,"ATR":p.ATR.values,"ATR_%":p.ATR_Pct.values,"Volume":p["Volume"].values if "Volume" in p.columns else np.nan,"Day0終値比_%":(p.Close.values/base-1)*100})
+    from wave_analysis import FEATURES
+    for col in FEATURES:
+        if col != "ATR_%": table[col]=p[col].values
+    return table
 
 def risk_diagnostic(design):
     if design is None or design.empty:return pd.DataFrame()
