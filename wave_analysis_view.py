@@ -46,7 +46,7 @@ def show_wave_analysis(result, path, swings, width):
         if not table.empty:
             st.dataframe(table,use_container_width=True,hide_index=True)
             groups.append(direction+"\n"+table.to_csv(index=False))
-    report=(f"過去の波の結果分析レポート v3.0.0\n銘柄: {result['ticker']}\n"
+    report=(f"過去の波の結果分析レポート v3.1.0\n銘柄: {result['ticker']}\n"
         f"期間: {result['analysis_start']} ～ {result['analysis_end']}\n転換点: 左右{width}本\n"
         "過去の波の開始条件と値幅の関連を確認してください。将来予測ではありません。\n"
         "【波と開始条件】\n"+waves.to_csv(index=False)+"\n【条件の比較】\n"+comparison.to_csv(index=False)

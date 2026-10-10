@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from market_view import show_market_context
 from wave_analysis_view import show_wave_analysis
+from easy_data_view import show_data_home, show_save_set
 from ticker_sheet import PRESET_TICKERS, normalize_sheet, add_ticker, remove_tickers, options_with_saved, normalize_ticker
 from capital_profiles import normalize_profiles, profile_values, save_profile, delete_profile, PROFILE_FIELDS, conversion_rate
 from analysis_profiles import normalize_analysis_profiles, save_analysis_profile, delete_analysis_profile, get_analysis_profile, parse_analysis_profiles_csv, PROFILE_FIELDS as ANALYSIS_PROFILE_FIELDS
@@ -51,6 +52,8 @@ if "loaded_ledger_hash" not in st.session_state:
     st.session_state.loaded_ledger_hash = None
 
 
+show_legacy = show_data_home()
+
 with st.expander("このアプリの見方（初心者向け）", expanded=True):
     st.write("**まず見る順番は4つだけです。**")
     st.write("① **価格チャート**で『BB下限付近から反発したか』を見る")
@@ -60,139 +63,140 @@ with st.expander("このアプリの見方（初心者向け）", expanded=True)
     st.warning("このアプリは『自動で正解を決める』ものではありません。グラフで見やすくする研究用ツールです。")
 
 
-st.subheader("0. 複数ケース比較台帳")
-u1, u2 = st.columns([2, 1])
-with u1:
-    uploaded = st.file_uploader("以前保存したケース台帳CSVを読み込む（例: bb_case_ledger_v2_4.csv）", type=["csv"], help="ファイル名の例: bb_case_ledger_v2_4.csv。比較台帳の保存ボタンでダウンロードしたCSVです。")
-with u2:
-    if st.button("台帳を空にする", use_container_width=True):
-        st.session_state.case_ledger = empty_case_ledger()
-        st.session_state.loaded_ledger_hash = None
-        st.success("比較台帳を空にしました。")
-if uploaded is not None:
-    raw = uploaded.getvalue()
-    h = hashlib.sha256(raw).hexdigest()
-    if h != st.session_state.loaded_ledger_hash:
-        try:
-            incoming = pd.read_csv(StringIO(raw.decode("utf-8-sig")))
-            st.session_state.case_ledger = merge_case_ledgers(st.session_state.case_ledger, incoming)
-            st.session_state.loaded_ledger_hash = h
-            st.success(f"台帳CSVを読み込みました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
-        except Exception as e:
-            st.error(f"台帳CSVを読み込めませんでした: {e}")
-
-ledger = normalize_case_ledger(st.session_state.case_ledger)
-case_count = ledger["Case_ID"].nunique() if not ledger.empty else 0
-ticker_count = ledger["銘柄"].nunique() if not ledger.empty else 0
-m1, m2 = st.columns(2)
-m1.metric("現在の比較ケース数", f"{case_count}")
-m2.metric("現在の比較銘柄数", f"{ticker_count}")
-if not ledger.empty:
-    st.download_button(
-        "比較台帳CSVを保存",
-        data=ledger.to_csv(index=False, float_format="%.6f").encode("utf-8-sig"),
-        file_name="bb_case_ledger_v2_4.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-st.divider()
-st.subheader("銘柄の保存シート")
-if "saved_tickers" not in st.session_state:
-    st.session_state.saved_tickers = pd.DataFrame(columns=["銘柄コード", "銘柄名"])
-st.session_state.saved_tickers = normalize_sheet(st.session_state.saved_tickers)
-with st.expander("銘柄を追加・削除・保存／復元", expanded=False):
-    st.caption("一覧はこの画面で追加・削除できます。CSVをダウンロードしておくと、次回起動時にも復元できます。")
-    saved_now=st.session_state.saved_tickers.copy()
-    if not saved_now.empty:
-        st.dataframe(saved_now,hide_index=True,use_container_width=True)
-        remove_options={f"{row['銘柄コード']}（{row['銘柄名']}）":row['銘柄コード'] for _,row in saved_now.iterrows()}
-        remove_labels=["削除する銘柄を選択"]+list(remove_options)
-        delete_key="ticker_sheet_remove"
-        if st.session_state.get(delete_key) not in remove_labels:st.session_state[delete_key]=remove_labels[0]
-        remove_label=st.selectbox("削除する銘柄",remove_labels,key=delete_key)
-        if st.button("選んだ銘柄を削除",key="delete_saved_tickers"):
-            code=remove_options.get(remove_label)
-            if code:
-                st.session_state.saved_tickers=remove_tickers(st.session_state.saved_tickers,[code])
-                st.rerun()
-    else:
-        st.info("保存シートは空です。銘柄を選び『選択銘柄を保存シートに追加』を押してください。")
-    st.download_button("保存シートCSVをダウンロード",
-        st.session_state.saved_tickers.to_csv(index=False).encode("utf-8-sig"),
-        file_name="saved_tickers.csv",mime="text/csv",key="download_saved_tickers")
-    uploaded_watchlist=st.file_uploader("以前保存した銘柄シートCSVを読み込む（例: saved_tickers.csv）",type=["csv"],key="upload_saved_tickers",help="ファイル名の例: saved_tickers.csv。銘柄シートのCSVダウンロードで保存したファイルです。")
-    if uploaded_watchlist is not None:
-        if st.button("CSVの内容で銘柄シートを復元",key="restore_saved_tickers"):
+if show_legacy:
+    st.subheader("0. 複数ケース比較台帳")
+    u1, u2 = st.columns([2, 1])
+    with u1:
+        uploaded = st.file_uploader("以前保存したケース台帳CSVを読み込む（例: bb_case_ledger_v2_4.csv）", type=["csv"], help="ファイル名の例: bb_case_ledger_v2_4.csv。比較台帳の保存ボタンでダウンロードしたCSVです。")
+    with u2:
+        if st.button("台帳を空にする", use_container_width=True):
+            st.session_state.case_ledger = empty_case_ledger()
+            st.session_state.loaded_ledger_hash = None
+            st.success("比較台帳を空にしました。")
+    if uploaded is not None:
+        raw = uploaded.getvalue()
+        h = hashlib.sha256(raw).hexdigest()
+        if h != st.session_state.loaded_ledger_hash:
             try:
-                raw_sheet=pd.read_csv(uploaded_watchlist)
-                aliases={"ticker":"銘柄コード","symbol":"銘柄コード","code":"銘柄コード","name":"銘柄名"}
-                incoming_columns={aliases.get(str(c).strip().casefold(),c) for c in raw_sheet.columns}
-                if "銘柄コード" not in incoming_columns:raise ValueError("CSVに『銘柄コード』列がありません。")
-                st.session_state.saved_tickers=normalize_sheet(raw_sheet)
-                st.rerun()
-            except Exception as exc:st.error(f"CSVを読み込めませんでした。銘柄コード・銘柄名の列を確認してください。{exc}")
+                incoming = pd.read_csv(StringIO(raw.decode("utf-8-sig")))
+                st.session_state.case_ledger = merge_case_ledgers(st.session_state.case_ledger, incoming)
+                st.session_state.loaded_ledger_hash = h
+                st.success(f"台帳CSVを読み込みました。現在 {st.session_state.case_ledger['Case_ID'].nunique()} ケースです。")
+            except Exception as e:
+                st.error(f"台帳CSVを読み込めませんでした: {e}")
 
-with st.expander("分析条件の保存・呼び出し", expanded=True):
-    st.caption("保存名・銘柄コード/銘柄名・基準日・開始日・終了日を一組で管理します。別セッションや再起動後はCSVを読み込んでください。")
-    st.session_state.analysis_profiles = normalize_analysis_profiles(st.session_state.analysis_profiles)
-    saved_analysis = st.session_state.analysis_profiles
-    if not saved_analysis.empty:
-        st.dataframe(saved_analysis, hide_index=True, use_container_width=True)
-        option_to_name = {
-            f"{row['保存名']} ｜ {row['銘柄コード']}（{row['銘柄名']}） ｜ {row['分析開始日']} ～ {row['分析終了日']}": row['保存名']
-            for _, row in saved_analysis.iterrows()
-        }
-        profile_labels = list(option_to_name)
-        load_key = "analysis_profile_load_choice"
-        if st.session_state.get(load_key) not in profile_labels:
-            st.session_state[load_key] = profile_labels[0]
-        load_label = st.selectbox("呼び出す分析条件", profile_labels, key=load_key)
-        if st.button("選んだ分析条件を呼び出す", key="load_analysis_profile"):
+    ledger = normalize_case_ledger(st.session_state.case_ledger)
+    case_count = ledger["Case_ID"].nunique() if not ledger.empty else 0
+    ticker_count = ledger["銘柄"].nunique() if not ledger.empty else 0
+    m1, m2 = st.columns(2)
+    m1.metric("現在の比較ケース数", f"{case_count}")
+    m2.metric("現在の比較銘柄数", f"{ticker_count}")
+    if not ledger.empty:
+        st.download_button(
+            "比較台帳CSVを保存",
+            data=ledger.to_csv(index=False, float_format="%.6f").encode("utf-8-sig"),
+            file_name="bb_case_ledger_v2_4.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    st.divider()
+    st.subheader("銘柄の保存シート")
+    if "saved_tickers" not in st.session_state:
+        st.session_state.saved_tickers = pd.DataFrame(columns=["銘柄コード", "銘柄名"])
+    st.session_state.saved_tickers = normalize_sheet(st.session_state.saved_tickers)
+    with st.expander("銘柄を追加・削除・保存／復元", expanded=False):
+        st.caption("一覧はこの画面で追加・削除できます。CSVをダウンロードしておくと、次回起動時にも復元できます。")
+        saved_now=st.session_state.saved_tickers.copy()
+        if not saved_now.empty:
+            st.dataframe(saved_now,hide_index=True,use_container_width=True)
+            remove_options={f"{row['銘柄コード']}（{row['銘柄名']}）":row['銘柄コード'] for _,row in saved_now.iterrows()}
+            remove_labels=["削除する銘柄を選択"]+list(remove_options)
+            delete_key="ticker_sheet_remove"
+            if st.session_state.get(delete_key) not in remove_labels:st.session_state[delete_key]=remove_labels[0]
+            remove_label=st.selectbox("削除する銘柄",remove_labels,key=delete_key)
+            if st.button("選んだ銘柄を削除",key="delete_saved_tickers"):
+                code=remove_options.get(remove_label)
+                if code:
+                    st.session_state.saved_tickers=remove_tickers(st.session_state.saved_tickers,[code])
+                    st.rerun()
+        else:
+            st.info("保存シートは空です。銘柄を選び『選択銘柄を保存シートに追加』を押してください。")
+        st.download_button("保存シートCSVをダウンロード",
+            st.session_state.saved_tickers.to_csv(index=False).encode("utf-8-sig"),
+            file_name="saved_tickers.csv",mime="text/csv",key="download_saved_tickers")
+        uploaded_watchlist=st.file_uploader("以前保存した銘柄シートCSVを読み込む（例: saved_tickers.csv）",type=["csv"],key="upload_saved_tickers",help="ファイル名の例: saved_tickers.csv。銘柄シートのCSVダウンロードで保存したファイルです。")
+        if uploaded_watchlist is not None:
+            if st.button("CSVの内容で銘柄シートを復元",key="restore_saved_tickers"):
+                try:
+                    raw_sheet=pd.read_csv(uploaded_watchlist)
+                    aliases={"ticker":"銘柄コード","symbol":"銘柄コード","code":"銘柄コード","name":"銘柄名"}
+                    incoming_columns={aliases.get(str(c).strip().casefold(),c) for c in raw_sheet.columns}
+                    if "銘柄コード" not in incoming_columns:raise ValueError("CSVに『銘柄コード』列がありません。")
+                    st.session_state.saved_tickers=normalize_sheet(raw_sheet)
+                    st.rerun()
+                except Exception as exc:st.error(f"CSVを読み込めませんでした。銘柄コード・銘柄名の列を確認してください。{exc}")
+
+    with st.expander("分析条件の保存・呼び出し", expanded=True):
+        st.caption("保存名・銘柄コード/銘柄名・基準日・開始日・終了日を一組で管理します。別セッションや再起動後はCSVを読み込んでください。")
+        st.session_state.analysis_profiles = normalize_analysis_profiles(st.session_state.analysis_profiles)
+        saved_analysis = st.session_state.analysis_profiles
+        if not saved_analysis.empty:
+            st.dataframe(saved_analysis, hide_index=True, use_container_width=True)
+            option_to_name = {
+                f"{row['保存名']} ｜ {row['銘柄コード']}（{row['銘柄名']}） ｜ {row['分析開始日']} ～ {row['分析終了日']}": row['保存名']
+                for _, row in saved_analysis.iterrows()
+            }
+            profile_labels = list(option_to_name)
+            load_key = "analysis_profile_load_choice"
+            if st.session_state.get(load_key) not in profile_labels:
+                st.session_state[load_key] = profile_labels[0]
+            load_label = st.selectbox("呼び出す分析条件", profile_labels, key=load_key)
+            if st.button("選んだ分析条件を呼び出す", key="load_analysis_profile"):
+                try:
+                    row = get_analysis_profile(saved_analysis, option_to_name[load_label])
+                    code = row["銘柄コード"]
+                    opts = options_with_saved(st.session_state.saved_tickers)
+                    matching = next((label for label, value in opts.items() if value == code), None)
+                    if matching:
+                        st.session_state["ticker_choice"] = matching
+                    else:
+                        st.session_state["ticker_choice"] = "その他（銘柄コードを入力）"
+                        st.session_state["ticker_custom"] = code
+                        st.session_state["ticker_custom_name"] = row["銘柄名"]
+                    st.session_state["case_date_value"] = pd.Timestamp(row["基準日"]).date()
+                    st.session_state["analysis_start_value"] = pd.Timestamp(row["分析開始日"]).date()
+                    st.session_state["analysis_end_value"] = pd.Timestamp(row["分析終了日"]).date()
+                    st.session_state.current_result = None
+                    st.session_state.current_settings = None
+                    st.session_state.analysis_profile_notice = f"「{row['保存名']}」を呼び出しました。銘柄と3つの日付を反映しました。必要に応じて『この条件で分析』を実行してください。"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"保存条件を呼び出せませんでした: {exc}")
+            delete_key = "analysis_profile_delete_choice"
+            if st.session_state.get(delete_key) not in profile_labels:
+                st.session_state[delete_key] = profile_labels[0]
+            delete_label = st.selectbox("削除する分析条件", profile_labels, key=delete_key)
+            if st.button("選んだ分析条件を削除", key="delete_analysis_profile"):
+                st.session_state.analysis_profiles = delete_analysis_profile(saved_analysis, option_to_name[delete_label])
+                st.session_state.analysis_profile_notice = f"「{option_to_name[delete_label]}」を削除しました。"
+                st.rerun()
+        else:
+            st.info("保存した分析条件はありません。銘柄と期間を入力後、下の保存欄から追加できます。")
+        st.download_button("分析条件CSVをダウンロード", saved_analysis.to_csv(index=False).encode("utf-8-sig"),
+            file_name="analysis_profiles.csv", mime="text/csv", key="download_analysis_profiles")
+        uploaded_analysis = st.file_uploader("以前保存した分析条件CSVを読み込む（例: analysis_profiles.csv）", type=["csv"], key="upload_analysis_profiles", help="ファイル名の例: analysis_profiles.csv。分析条件一覧のCSVダウンロードで保存したファイルです。")
+        if uploaded_analysis is not None and st.button("CSVの内容で分析条件を復元", key="restore_analysis_profiles"):
             try:
-                row = get_analysis_profile(saved_analysis, option_to_name[load_label])
-                code = row["銘柄コード"]
-                opts = options_with_saved(st.session_state.saved_tickers)
-                matching = next((label for label, value in opts.items() if value == code), None)
-                if matching:
-                    st.session_state["ticker_choice"] = matching
-                else:
-                    st.session_state["ticker_choice"] = "その他（銘柄コードを入力）"
-                    st.session_state["ticker_custom"] = code
-                    st.session_state["ticker_custom_name"] = row["銘柄名"]
-                st.session_state["case_date_value"] = pd.Timestamp(row["基準日"]).date()
-                st.session_state["analysis_start_value"] = pd.Timestamp(row["分析開始日"]).date()
-                st.session_state["analysis_end_value"] = pd.Timestamp(row["分析終了日"]).date()
-                st.session_state.current_result = None
-                st.session_state.current_settings = None
-                st.session_state.analysis_profile_notice = f"「{row['保存名']}」を呼び出しました。銘柄と3つの日付を反映しました。必要に応じて『この条件で分析』を実行してください。"
+                restored, skipped = parse_analysis_profiles_csv(uploaded_analysis)
+                st.session_state.analysis_profiles = restored
+                note = f"分析条件を{len(restored)}件復元しました。"
+                if skipped:
+                    note += f" 無効な行{skipped}件は除外しました。"
+                st.session_state.analysis_profile_notice = note
                 st.rerun()
             except Exception as exc:
-                st.error(f"保存条件を呼び出せませんでした: {exc}")
-        delete_key = "analysis_profile_delete_choice"
-        if st.session_state.get(delete_key) not in profile_labels:
-            st.session_state[delete_key] = profile_labels[0]
-        delete_label = st.selectbox("削除する分析条件", profile_labels, key=delete_key)
-        if st.button("選んだ分析条件を削除", key="delete_analysis_profile"):
-            st.session_state.analysis_profiles = delete_analysis_profile(saved_analysis, option_to_name[delete_label])
-            st.session_state.analysis_profile_notice = f"「{option_to_name[delete_label]}」を削除しました。"
-            st.rerun()
-    else:
-        st.info("保存した分析条件はありません。銘柄と期間を入力後、下の保存欄から追加できます。")
-    st.download_button("分析条件CSVをダウンロード", saved_analysis.to_csv(index=False).encode("utf-8-sig"),
-        file_name="analysis_profiles.csv", mime="text/csv", key="download_analysis_profiles")
-    uploaded_analysis = st.file_uploader("以前保存した分析条件CSVを読み込む（例: analysis_profiles.csv）", type=["csv"], key="upload_analysis_profiles", help="ファイル名の例: analysis_profiles.csv。分析条件一覧のCSVダウンロードで保存したファイルです。")
-    if uploaded_analysis is not None and st.button("CSVの内容で分析条件を復元", key="restore_analysis_profiles"):
-        try:
-            restored, skipped = parse_analysis_profiles_csv(uploaded_analysis)
-            st.session_state.analysis_profiles = restored
-            note = f"分析条件を{len(restored)}件復元しました。"
-            if skipped:
-                note += f" 無効な行{skipped}件は除外しました。"
-            st.session_state.analysis_profile_notice = note
-            st.rerun()
-        except Exception as exc:
-            st.error(f"CSVを読み込めませんでした。元の保存条件は変更していません。{exc}")
+                st.error(f"CSVを読み込めませんでした。元の保存条件は変更していません。{exc}")
 
 st.subheader("1. 銘柄と分析期間")
 c1, c2 = st.columns(2)
@@ -212,7 +216,7 @@ with c1:
         ticker=selected_code
         custom_name=None
     st.caption(f"分析に使うコード：{ticker or '未入力'}")
-    if ticker and st.button("選択銘柄を保存シートに追加",key="add_saved_ticker"):
+    if show_legacy and ticker and st.button("選択銘柄を保存シートに追加",key="add_saved_ticker"):
         updated,added=add_ticker(st.session_state.saved_tickers,ticker,custom_name or None)
         st.session_state.saved_tickers=updated
         if added:st.rerun()
@@ -225,34 +229,35 @@ with c3:
 with c4:
     analysis_end = st.date_input("分析終了日", key="analysis_end_value")
 
-with st.expander("現在の銘柄・分析期間を保存", expanded=False):
-    preset_name = st.text_input("保存名", placeholder="例：NVDA 直近1年", key="analysis_profile_new_name")
-    if st.button("現在の銘柄・期間を保存", key="save_analysis_profile"):
-        if ticker_options.get(ticker_choice) == "__CUSTOM__":
-            profile_ticker_name = custom_name or ticker
-        else:
-            profile_ticker_name = PRESET_TICKERS.get(ticker, ticker)
-            for _, saved_row in st.session_state.saved_tickers.iterrows():
-                if saved_row["銘柄コード"] == ticker:
-                    profile_ticker_name = saved_row["銘柄名"]
-                    break
-        try:
-            st.session_state.analysis_profiles = save_analysis_profile(
-                st.session_state.analysis_profiles, preset_name, ticker, profile_ticker_name,
-                case_date, analysis_start, analysis_end)
-            st.session_state.analysis_profile_notice = f"「{preset_name.strip()}」を保存しました。保存条件一覧に反映しました。"
-            st.rerun()
-        except Exception as exc:
-            st.error(str(exc))
+if show_legacy:
+    with st.expander("現在の銘柄・分析期間を保存", expanded=False):
+        preset_name = st.text_input("保存名", placeholder="例：NVDA 直近1年", key="analysis_profile_new_name")
+        if st.button("現在の銘柄・期間を保存", key="save_analysis_profile"):
+            if ticker_options.get(ticker_choice) == "__CUSTOM__":
+                profile_ticker_name = custom_name or ticker
+            else:
+                profile_ticker_name = PRESET_TICKERS.get(ticker, ticker)
+                for _, saved_row in st.session_state.saved_tickers.iterrows():
+                    if saved_row["銘柄コード"] == ticker:
+                        profile_ticker_name = saved_row["銘柄名"]
+                        break
+            try:
+                st.session_state.analysis_profiles = save_analysis_profile(
+                    st.session_state.analysis_profiles, preset_name, ticker, profile_ticker_name,
+                    case_date, analysis_start, analysis_end)
+                st.session_state.analysis_profile_notice = f"「{preset_name.strip()}」を保存しました。保存条件一覧に反映しました。"
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
 
 st.subheader("2. 1R・Stopの比較条件")
 c5, c6, c7 = st.columns(3)
 with c5:
-    atr_period = st.number_input("ATR期間", 5, 100, 14, 1, help="ATR = Average True Range。直近の値幅の大きさです。")
+    atr_period = st.number_input("ATR期間", 5, 100, 14, 1, key="easy_atr", help="ATR = Average True Range。直近の値幅の大きさです。")
 with c6:
-    atr_multipliers_text = st.text_input("比較するATR倍率", value="1.0,1.5,2.0", help="カンマ区切り。例: 1.0,1.5,2.0,2.5")
+    atr_multipliers_text = st.text_input("比較するATR倍率", value="1.0,1.5,2.0", key="easy_multipliers", help="カンマ区切り。例: 1.0,1.5,2.0,2.5")
 with c7:
-    selected_atr_multiplier = st.number_input("資金管理で主に使うATR倍率", 0.1, 10.0, 1.5, 0.1, format="%.1f")
+    selected_atr_multiplier = st.number_input("資金管理で主に使うATR倍率", 0.1, 10.0, 1.5, 0.1, format="%.1f", key="easy_selected_atr")
 
 st.subheader("3. 資金管理・保存設定")
 st.caption("通貨は選択中の銘柄コードから初期推定します。米国株USD・円資金JPYでは最新取得可能なドル円を自動取得します。日本株JPY・円資金JPYは換算1です。")
@@ -261,44 +266,45 @@ if st.session_state.get("quote_currency_ticker") != ticker:
     st.session_state["quote_currency"]="JPY" if ticker.upper().endswith('.T') else "USD"
     st.session_state["quote_currency_ticker"]=ticker
 
-with st.expander("資金管理の初期値を保存・読み込み",expanded=False):
-    st.caption("名前を付けて複数の設定を保存できます。設定一覧はCSVでダウンロードし、次回は読み込んで復元します。")
-    uploaded_profiles=st.file_uploader("以前保存した資金設定CSV（例: capital_profiles.csv）",type=["csv"],key="capital_profiles_upload",help="ファイル名の例: capital_profiles.csv。資金設定のCSVダウンロードで保存したファイルです。")
-    if uploaded_profiles is not None and st.button("CSVから資金設定を復元",key="capital_profiles_restore"):
-        try:
-            raw_profiles=pd.read_csv(uploaded_profiles)
-            if not set(PROFILE_FIELDS).issubset(raw_profiles.columns):raise ValueError("必要な資金設定の列がありません。")
-            st.session_state.capital_profiles=normalize_profiles(raw_profiles)
-            st.rerun()
-        except Exception as exc:st.error(f"CSVを読み込めませんでした。ファイル内容を確認してください。{exc}")
-    st.download_button("資金設定CSVをダウンロード",
-        normalize_profiles(st.session_state.capital_profiles).to_csv(index=False).encode("utf-8-sig"),
-        file_name="capital_profiles.csv",mime="text/csv",key="capital_profiles_download")
-    profiles=normalize_profiles(st.session_state.capital_profiles)
-    choices=["読み込む設定を選択"]+profiles["プロファイル名"].tolist()
-    if st.session_state.get("capital_profile_choice") not in choices:st.session_state["capital_profile_choice"]=choices[0]
-    chosen_profile=st.selectbox("保存した資金設定",choices,key="capital_profile_choice")
-    p1,p2=st.columns(2)
-    with p1:
-        if st.button("選んだ設定を読み込む",key="capital_profile_load"):
-            row=profiles.loc[profiles["プロファイル名"].eq(chosen_profile)]
-            if not row.empty:
-                values=profile_values(row.iloc[0])
-                widget_keys={"total_capital":"cap_total","symbol_budget":"cap_budget","risk_pct":"cap_risk_pct",
-                    "capital_currency":"cap_currency","quote_currency":"quote_currency",
-                    "capital_fx_mode":"capital_fx_mode","manual_quote_fx":"manual_quote_fx"}
-                for _source,_widget in widget_keys.items():
-                    if _source in values and pd.notna(values[_source]):st.session_state[_widget]=values[_source]
-                st.session_state["quote_currency_ticker"]=ticker
+if show_legacy:
+    with st.expander("資金管理の初期値を保存・読み込み",expanded=False):
+        st.caption("名前を付けて複数の設定を保存できます。設定一覧はCSVでダウンロードし、次回は読み込んで復元します。")
+        uploaded_profiles=st.file_uploader("以前保存した資金設定CSV（例: capital_profiles.csv）",type=["csv"],key="capital_profiles_upload",help="ファイル名の例: capital_profiles.csv。資金設定のCSVダウンロードで保存したファイルです。")
+        if uploaded_profiles is not None and st.button("CSVから資金設定を復元",key="capital_profiles_restore"):
+            try:
+                raw_profiles=pd.read_csv(uploaded_profiles)
+                if not set(PROFILE_FIELDS).issubset(raw_profiles.columns):raise ValueError("必要な資金設定の列がありません。")
+                st.session_state.capital_profiles=normalize_profiles(raw_profiles)
                 st.rerun()
-    with p2:
-        delete_choices=["削除する設定を選択"]+profiles["プロファイル名"].tolist()
-        if st.session_state.get("capital_profile_delete_choice") not in delete_choices:st.session_state["capital_profile_delete_choice"]=delete_choices[0]
-        delete_choice=st.selectbox("削除する保存設定",delete_choices,key="capital_profile_delete_choice")
-        if st.button("選んだ設定を削除",key="capital_profile_delete") and delete_choice!=delete_choices[0]:
-            st.session_state.capital_profiles=delete_profile(profiles,delete_choice)
-            st.rerun()
-    st.dataframe(profiles,hide_index=True,use_container_width=True)
+            except Exception as exc:st.error(f"CSVを読み込めませんでした。ファイル内容を確認してください。{exc}")
+        st.download_button("資金設定CSVをダウンロード",
+            normalize_profiles(st.session_state.capital_profiles).to_csv(index=False).encode("utf-8-sig"),
+            file_name="capital_profiles.csv",mime="text/csv",key="capital_profiles_download")
+        profiles=normalize_profiles(st.session_state.capital_profiles)
+        choices=["読み込む設定を選択"]+profiles["プロファイル名"].tolist()
+        if st.session_state.get("capital_profile_choice") not in choices:st.session_state["capital_profile_choice"]=choices[0]
+        chosen_profile=st.selectbox("保存した資金設定",choices,key="capital_profile_choice")
+        p1,p2=st.columns(2)
+        with p1:
+            if st.button("選んだ設定を読み込む",key="capital_profile_load"):
+                row=profiles.loc[profiles["プロファイル名"].eq(chosen_profile)]
+                if not row.empty:
+                    values=profile_values(row.iloc[0])
+                    widget_keys={"total_capital":"cap_total","symbol_budget":"cap_budget","risk_pct":"cap_risk_pct",
+                        "capital_currency":"cap_currency","quote_currency":"quote_currency",
+                        "capital_fx_mode":"capital_fx_mode","manual_quote_fx":"manual_quote_fx"}
+                    for _source,_widget in widget_keys.items():
+                        if _source in values and pd.notna(values[_source]):st.session_state[_widget]=values[_source]
+                    st.session_state["quote_currency_ticker"]=ticker
+                    st.rerun()
+        with p2:
+            delete_choices=["削除する設定を選択"]+profiles["プロファイル名"].tolist()
+            if st.session_state.get("capital_profile_delete_choice") not in delete_choices:st.session_state["capital_profile_delete_choice"]=delete_choices[0]
+            delete_choice=st.selectbox("削除する保存設定",delete_choices,key="capital_profile_delete_choice")
+            if st.button("選んだ設定を削除",key="capital_profile_delete") and delete_choice!=delete_choices[0]:
+                st.session_state.capital_profiles=delete_profile(profiles,delete_choice)
+                st.rerun()
+        st.dataframe(profiles,hide_index=True,use_container_width=True)
 
 cc1,cc2,cc3=st.columns(3)
 with cc1:
@@ -333,24 +339,28 @@ with c8:total_capital=st.number_input(f"総資金（{capital_currency}）",min_v
 with c9:symbol_budget=st.number_input(f"この1銘柄に使える予算（{capital_currency}）",min_value=0.,step=10000.,format="%.2f",key="cap_budget")
 with c10:risk_pct=st.number_input("1取引の許容損失（総資金に対する%）",.01,100.,step=.1,format="%.2f",key="cap_risk_pct")
 
-save1,save2=st.columns([1,2])
-with save1:profile_new_name=st.text_input("保存名",placeholder="例：円資金・米国株",key="capital_profile_new_name")
-with save2:
-    if st.button("現在の資金設定を保存",key="capital_profile_save"):
-        values={"total_capital":total_capital,"symbol_budget":symbol_budget,"risk_pct":risk_pct,
-            "capital_currency":capital_currency,"quote_currency":quote_currency,
-            "capital_fx_mode":fx_mode,"manual_quote_fx":st.session_state.get("manual_quote_fx",1.0)}
-        try:
-            st.session_state.capital_profiles=save_profile(st.session_state.capital_profiles,profile_new_name,values)
-            st.rerun()
-        except ValueError as exc:st.error(str(exc))
+if show_legacy:
+    save1,save2=st.columns([1,2])
+    with save1:profile_new_name=st.text_input("保存名",placeholder="例：円資金・米国株",key="capital_profile_new_name")
+    with save2:
+        if st.button("現在の資金設定を保存",key="capital_profile_save"):
+            values={"total_capital":total_capital,"symbol_budget":symbol_budget,"risk_pct":risk_pct,
+                "capital_currency":capital_currency,"quote_currency":quote_currency,
+                "capital_fx_mode":fx_mode,"manual_quote_fx":st.session_state.get("manual_quote_fx",1.0)}
+            try:
+                st.session_state.capital_profiles=save_profile(st.session_state.capital_profiles,profile_new_name,values)
+                st.rerun()
+            except ValueError as exc:st.error(str(exc))
 
 st.subheader("4. 売買コスト")
 c13, c14 = st.columns(2)
 with c13:
-    commission_pct = st.number_input("手数料率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f")
+    commission_pct = st.number_input("手数料率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f", key="easy_commission")
 with c14:
-    slippage_pct = st.number_input("スリッページ率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f")
+    slippage_pct = st.number_input("スリッページ率（片道・%）", 0.0, 5.0, 0.10, 0.01, format="%.2f", key="easy_slippage")
+
+saved_company = st.session_state.saved_tickers.loc[st.session_state.saved_tickers["銘柄コード"].eq(ticker), "銘柄名"]
+show_save_set(ticker, custom_name or (saved_company.iloc[-1] if not saved_company.empty else PRESET_TICKERS.get(ticker,ticker)))
 
 run = st.button("この条件で完全分析", type="primary", use_container_width=True)
 
